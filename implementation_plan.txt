@@ -1,0 +1,1376 @@
+# DocLock — Supabase Database Integration & Implementation Plan
+
+> **Executive Summary**: This plan provides a complete, screen-first architectural blueprint for integrating Supabase into the **DocLock** medical examination preparation application. Every table, column, index, and RLS policy is strictly derived from real screens, user flows, and interactive state in the application.
+
+---
+
+## 1. Application Overview
+
+- **Application Name**: DocLock — Medical Exam Preparation & Clinical Learning Platform
+- **Target Audience**: Medical candidates preparing for high-stakes licensure exams (FMGE, NEET PG, USMLE Step 1, INI-CET).
+- **Core Technology Stack**:
+  - Frontend: React Native (Expo SDK 52, Expo Router v4, TypeScript, Reanimated, Safe Area Context)
+  - Backend: Supabase (PostgreSQL 15+, Supabase Auth, Row Level Security, Realtime WebSockets, Supabase Storage)
+  - State & Data Fetching: React Context / TanStack React Query + Supabase JS Client
+- **Existing State**: The frontend UI is fully styled and interactive, utilizing modular mock datasets (`data/*.ts`). No persistent database or authentication backend is currently wired.
+- **Architectural Philosophy**: **Screen → UI Requirement → Data Requirement → Table → Column → Relationship → RLS → Query**. No redundant tables or unneeded columns.
+
+---
+
+## 2. Complete Screen Inventory
+
+| Module | Screen Path | Role | Purpose | Data Displayed | User Actions |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Authentication** | `app/auth/login` *(to create)* | Guest / Candidate | Account authentication | Email & password inputs, remember me, error alerts | Sign In, Navigate to Register, Forgot Password, OAuth |
+| **Authentication** | `app/auth/register` *(to create)* | Guest | Account onboarding | Name, email, password, target exam selection | Sign Up, Select target exam, Redirect to App |
+| **Authentication** | `app/auth/forgot-password` *(to create)* | Guest | Password reset recovery | Email input, confirmation status | Send Reset Email, Return to Login |
+| **Home / Dashboard** | `app/(tabs)/index` | Candidate | Central revision & study hub | Candidate greeting, daily countdown, quick resource badges, adaptive activity carousel (live, resume video/test/qbank), daily high-yield clinical MCQ, desktop sync banner | Tap resource shortcuts, resume video/test/qbank, join live stream modal, select & submit MCQ answer, view MCQ clinical explanation |
+| **QBank Catalog** | `app/(tabs)/qbank` | Candidate | Browse 19 medical subjects for practice questions | Subject cards (name, chapter count, MCQ count, icon, category badges), filter chips (Pre-Clinical, Para-Clinical, Clinical, High-Yield, Short Subjects) | Filter by category, search subjects, select subject to open chapter breakdown |
+| **QBank Subject Detail** | `app/qbank/[id]` | Candidate | Subject chapters, topic drills, and MCQ quiz execution | Overall subject progress (% completed, MCQs solved, accuracy rate), chapter accordion list, subheading topics (MCQs count, duration, status: unattempted/in-progress/completed, high-yield tag, image-based tag), mode selection modal, interactive MCQ runner modal | Filter topics (all, high-yield, unattempted, completed, image-based), search chapters, expand/collapse chapters, launch quiz drill (Practice / Exam / Study mode), answer questions, flag, cross-out options, view golden pearls, submit quiz |
+| **Video Directory** | `app/(tabs)/videos` | Candidate | Video lecture catalog by medical subject | Subject cards (name, chapters, video count, total duration hours, category tag), category filter tabs | Filter subjects by specialty, search subjects, open subject classes |
+| **Subject Video Classes** | `app/videos/[id]` | Candidate | Subject lecture classes & playlist grouping | Subject video stats (total hours, video count, completed classes, progress bar), faculty lead card, chapter lecture list (class number, title, duration, views, rating, status) | Filter lectures (all, high-yield, in-progress, completed, chapter filter), search lectures, bookmark subject, expand/collapse chapters, open video player |
+| **Video Class Player** | `app/videos/class/[classId]` | Candidate | Video lecture playback, clinical pearls, and notes | Embedded video stream, scrub bar, speed selector (0.75x–2.0x), class metadata (faculty avatar/title, views, rating), detail tabs: Timestamps (clickable chapter markers), High-Yield Pearls, Playlist, PDF slide notes download button, Practice MCQs shortcut button | Play/pause, seek, adjust speed, jump to timestamp, download PDF lecture notes, bookmark class, navigate to associated MCQ topic drill |
+| **Tests & Mocks** | `app/(tabs)/tests` | Candidate | Standardized test catalog & grand mocks | Test filter tabs (Grand Tests, Subject Tests, Mini Mocks, PYQs), test cards (title, tag, test count, MCQ count, duration hours, completion status), mode selector modal | Filter tests, search tests, launch test attempt (Exam / Practice mode), complete and view score summary |
+| **Live Classroom** | `app/live/[id]` | Candidate / Faculty | Real-time interactive class stream & engagement | Live video stream, presenter stage, viewer count, live chat feed, live polls with real-time percentage votes, presentation slides, faculty details, raised hands audio queue | Watch stream, switch stage layout (presentation / speaker / gallery), post live chat message, submit poll vote, trigger emoji floating reactions, toggle raise hand queue |
+| **Bookmarks** | `app/bookmarks` | Candidate | Central study locker for saved resources | Saved bookmarks count, type filter tabs (MCQ, Video, Clinical Pearl, Flashcard), subject filter chips, search bar, bookmark cards with source snippets and timestamps | Search bookmarks, filter by type/subject, remove bookmark, open linked resource directly |
+| **Daily Goals** | `app/daily-goals` | Candidate | Daily task progress & weekly study streak | Daily completion gauge, today's tasks list (target vs completed counts, unit, time estimate, status checkbox), weekly 7-day study activity chart (daily % & hours spent), Add custom goal modal | Toggle task completion, add custom study goal, view historical daily study performance |
+| **Offline Downloads** | `app/downloads` | Candidate | Offline media storage management | Total storage used (MB), storage bar, Wi-Fi only download switch, type tabs (Videos, PDF Slides, Audio), downloaded items list with file size and quality badge | Filter downloads, delete single download, clear all downloads, toggle Wi-Fi download preference |
+| **Flashcards** | `app/flashcards` | Candidate | Spaced repetition memory cards & deck browser | Flashcard deck statistics (Pharmacology, Anatomy, Pathology, Microbiology), 3D flip card (Question front, Answer & Golden Pearl back), difficulty rating buttons (Again, Hard, Good, Easy), progress counter | Flip flashcard, rate recall difficulty (spaced repetition algorithm), cycle to next card, switch deck |
+| **Candidate Profile** | `app/(tabs)/profile` | Candidate | User credentials, performance metrics & account settings | Candidate card (name, email, avatar, pro pass status, candidate ID #), metric strip (streak days, MCQs solved, avg accuracy), preparation performance card (All-India GT rank, national percentile, video hours), study resource shortcuts, target exam preference, subscription info, daily reminder schedules, linked devices, cache clear, logout | Edit profile, view detailed performance analytics report, change target exam, view billing, configure reminder times, view active sessions, clear offline cache, sign out |
+
+---
+
+## 3. Screen-by-Screen Data Requirements
+
+### Screen 1: Home Dashboard (`app/(tabs)/index`)
+- **Information Required**:
+  - Candidate profile: First name (`Alex`), avatar URL.
+  - Active Target Exam: Exam name (`FMGE`), days remaining countdown (`84 days`).
+  - Quick Resource Counters: Bookmarked items count (`142`), Flashcards count (`580`), Offline downloads count (`12`), Notes count (`34`).
+  - Active Activity Carousel:
+    - Ongoing live class: Session ID, title, subject, chapter, attendee count, faculty avatar/name, stream status.
+    - Resume video: Class ID, title, subject, duration watched vs total, progress %.
+    - Resume test: Test ID, title, MCQs solved vs total, time remaining.
+    - Resume QBank: Topic ID, title, MCQs solved vs total, accuracy %.
+  - Daily High-Yield MCQ: Question ID, topic, difficulty, clinical vignette, 4 options (A-D text), correct option ID, clinical explanation text.
+  - Desktop Sync Status: Connected device count, last sync timestamp.
+- **User Actions**:
+  - Tap Quick Study Resource pill (navigate to `/bookmarks`, `/flashcards`, `/downloads`, etc.).
+  - Tap carousel card (join live stream modal or resume video/test/qbank).
+  - Select MCQ option (triggers enabled state for submission button).
+  - Submit MCQ answer (validates choice, animates explanation card, stores user response).
+  - Retest/Reset Daily MCQ.
+
+### Screen 2: QBank Subject Directory (`app/(tabs)/qbank`)
+- **Information Required**:
+  - List of 19 medical subjects: ID, name, chapters count, total MCQ count, category tags (`pre-clinical`, `para-clinical`, `clinical`, `high-yield`, `short-subjects`), theme icon name, icon colors.
+  - Category filter chip counts.
+- **User Actions**:
+  - Search subjects by text query.
+  - Filter subjects by category chip.
+  - Tap subject card to navigate to `/qbank/[id]`.
+
+### Screen 3: QBank Subject Detail & Quiz Runner (`app/qbank/[id]`)
+- **Information Required**:
+  - Subject header: Subject name, total chapters, total MCQs, completed MCQs, overall accuracy %.
+  - Chapters list: Chapter number, chapter title.
+  - Subheading topics list: Topic ID, topic title, MCQ count, completed count, duration minutes, status (`unattempted`, `in-progress`, `completed`), flags (`isHighYield`, `isImageBased`).
+  - MCQ Attempt Modal Data:
+    - Topic questions array: Question ID, vignette, image URL, difficulty, options (A-D), correct option ID, peer percentage, comprehensive explanation, golden pearl, reference textbook citation.
+    - User state: Selected option, isFlagged, isStruckThrough (A-D), time spent seconds.
+- **User Actions**:
+  - Filter topics by status or high-yield tags.
+  - Search chapters and topics.
+  - Expand/collapse chapter accordion.
+  - Tap topic to open Mode Selection Modal (`Practice`, `Exam`, `Study`).
+  - Execute MCQ Quiz: Select option, strike-through distractor, flag for review, toggle question palette, navigate next/prev, toggle timer, finish test.
+  - Record session results to database.
+
+### Screen 4: Video Directory (`app/(tabs)/videos`)
+- **Information Required**:
+  - Video subjects: Subject ID, name, chapters count, total duration hours, video lecture count, category tags, icon name & colors.
+- **User Actions**:
+  - Filter by category chip, search subjects, tap subject to navigate to `/videos/[id]`.
+
+### Screen 5: Subject Classes & Playlist (`app/videos/[id]`)
+- **Information Required**:
+  - Subject metadata: Total video count, total hours, completed count, progress %.
+  - Lead Faculty: Name, title, avatar URL, institution affiliation.
+  - Recorded classes: ID, class number, title, chapter title, duration, thumbnail URL, views count, rating, status (`unwatched`, `in-progress`, `completed`), high-yield badge.
+- **User Actions**:
+  - Search classes, filter by status or chapter, toggle bookmark, tap class to navigate to `/videos/class/[classId]`.
+
+### Screen 6: Video Player & Lesson Detail (`app/videos/class/[classId]`)
+- **Information Required**:
+  - Video details: Title, chapter title, faculty details, video stream URL, duration seconds, current user playback position seconds, view count, star rating, full clinical description.
+  - Timestamps: Array of `{ time, seconds, title, isHighYield }`.
+  - High-Yield Pearls: Array of clinical summary pearls.
+  - Associated PDF notes: Filename, file size, download URL.
+  - Associated MCQ topic: Topic ID, associated MCQ count.
+  - Playlist: Other classes in the same chapter.
+- **User Actions**:
+  - Play/pause, seek scrub bar, speed toggle (0.75x–2.0x), jump to timestamp marker, download PDF lecture notes, bookmark class, navigate to linked MCQ practice drill.
+
+### Screen 7: Tests & Assessments (`app/(tabs)/tests`)
+- **Information Required**:
+  - Assessments list: ID, title, category (`grand-tests`, `subject-tests`, `mini-mocks`, `pyqs`), tag text & colors, tests count, mcqs count, duration hours, user status (`Available`, `In Progress`, `Completed 82%`, `Ranked`).
+  - Active test attempt state: Timer, questions array, question palette.
+- **User Actions**:
+  - Filter tests by category tab, search tests, tap test to launch Mode Selection Modal, start test attempt, submit answers, view national percentile and score summary.
+
+### Screen 8: Live Interactive Classroom (`app/live/[id]`)
+- **Information Required**:
+  - Session details: Title, subject, chapter, status (`live`, `upcoming`, `scheduled`), active viewer count, attendees count, faculty profile, start time, duration, stream URL, key topics.
+  - Live Poll: Question, options array with vote percentages, user selected vote ID, total votes.
+  - Live Chat Feed: Message ID, user name, user avatar, role (`faculty`, `moderator`, `candidate`), message text, timestamp, verified badge.
+  - Hand Raise Queue: User queue position, isHandRaised status.
+- **User Actions**:
+  - Send chat message, vote on active live poll, trigger emoji floating reaction, raise/lower hand for audio queue, switch layout mode.
+
+### Screen 9: Saved Bookmarks (`app/bookmarks`)
+- **Information Required**:
+  - Bookmarks array: ID, resource type (`mcq`, `video`, `pearl`, `flashcard`), title, subject, chapter, snippet text, saved date, target route, faculty name, difficulty tag.
+- **User Actions**:
+  - Filter by resource type, filter by subject, search text, remove bookmark, tap to open source resource.
+
+### Screen 10: Daily Goals & Streak (`app/daily-goals`)
+- **Information Required**:
+  - Daily tasks: ID, title, category (`mcq`, `video`, `flashcard`, `live`, `test`), target count, completed count, unit, isCompleted flag, estimated time minutes, icon, accent color.
+  - Weekly activity history: 7 days data (`dayName`, `dateNumber`, `percent`, `isToday`, `hoursSpent`).
+- **User Actions**:
+  - Check/uncheck task completion, tap "Add Custom Goal" (select category, target count, time estimate).
+
+### Screen 11: Offline Downloads Manager (`app/downloads`)
+- **Information Required**:
+  - Downloads list: ID, title, subject, type (`video`, `slides`, `audio`), duration or pages, file size in MB, download date, local URI / remote CDN URL, quality badge (`1080p HD`, `PDF Document`).
+  - Storage stats: Total MB used, device storage available.
+  - Settings: Wi-Fi only download boolean toggle.
+- **User Actions**:
+  - Filter by media type, delete single item from local storage and DB registry, clear all downloads, toggle Wi-Fi only download setting.
+
+### Screen 12: Flashcards & Spaced Repetition (`app/flashcards`)
+- **Information Required**:
+  - Flashcard Decks: Deck ID, subject name, total cards, due today count, mastered %, icon, accent color.
+  - Active Cards Queue: Card ID, subject, chapter, category, front question text, back answer text, high-yield golden pearl text.
+  - Today's completed review count.
+- **User Actions**:
+  - Tap card to trigger 3D flip animation, rate card difficulty (`Again`, `Hard`, `Good`, `Easy`), trigger spaced repetition interval update, switch subject deck.
+
+### Screen 13: Candidate Profile & Preferences (`app/(tabs)/profile`)
+- **Information Required**:
+  - Profile info: User ID, candidate ID (`#DL-89421`), full name, email, avatar URL, Pro Pass active status, subscription renewal date, target exam (`FMGE Dec 2026`).
+  - Study metrics: Days streak count, total MCQs solved, overall accuracy %.
+  - Preparation Analytics: All-India Grand Test rank (`#412`), total candidates benchmarked (`14.2k`), national percentile tag (`Top 2.9% National`), total video hours watched (`148 hrs`).
+  - Preferences: Daily reminder times, linked devices list, cached data size.
+- **User Actions**:
+  - Edit profile name/avatar, view detailed analytics report, switch target exam, manage billing, change reminder schedules, view/revoke linked devices, clear cached video files, sign out.
+
+---
+
+## 4. Screen → Table → Column Mapping
+
+| UI Screen | UI Element / Data Requirement | Target Supabase Table | Required Database Columns |
+| :--- | :--- | :--- | :--- |
+| `app/(tabs)/index` | User greeting & avatar | `user_profiles` | `id`, `full_name`, `avatar_url` |
+| `app/(tabs)/index` | Target exam countdown | `user_settings` | `target_exam_name`, `target_exam_date` |
+| `app/(tabs)/index` | Resource counters (bookmarks, flashcards, etc.) | `user_study_stats` *(view/table)* | `bookmarks_count`, `flashcards_count`, `downloads_count`, `notes_count` |
+| `app/(tabs)/index` | Daily MCQ Widget | `mcq_questions`, `mcq_options` | `mcq_questions.id`, `clinical_vignette`, `difficulty`, `explanation`, `mcq_options.id`, `option_label`, `option_text`, `is_correct` |
+| `app/(tabs)/index` | Live Class Carousel Card | `live_sessions` | `id`, `title`, `subject_id`, `status`, `attendees_count`, `stream_url`, `faculty_id` |
+| `app/(tabs)/index` | Resume Video Carousel Card | `user_video_progress`, `video_classes` | `video_classes.id`, `video_classes.title`, `user_video_progress.progress_percent`, `user_video_progress.last_position_seconds` |
+| `app/(tabs)/index` | Resume Test Carousel Card | `quiz_attempts`, `assessments` | `assessments.title`, `quiz_attempts.answered_count`, `quiz_attempts.total_questions`, `quiz_attempts.time_remaining_seconds` |
+| `app/(tabs)/index` | Resume QBank Drill Card | `quiz_attempts`, `topics` | `topics.title`, `quiz_attempts.answered_count`, `quiz_attempts.accuracy_percentage` |
+| `app/(tabs)/qbank` | Subject list & filter chips | `subjects` | `id`, `name`, `chapters_count`, `mcq_count`, `categories`, `icon_name`, `icon_bg_color`, `icon_color` |
+| `app/qbank/[id]` | Subject progress summary | `user_subject_progress` | `user_id`, `subject_id`, `completed_mcqs`, `accuracy_rate` |
+| `app/qbank/[id]` | Chapter & Subheading Topic list | `chapters`, `topics` | `chapters.id`, `chapters.chapter_number`, `chapters.title`, `topics.id`, `topics.title`, `topics.mcq_count`, `topics.duration_minutes`, `topics.is_high_yield`, `topics.is_image_based` |
+| `app/qbank/[id]` | Topic completion status | `user_topic_progress` | `user_id`, `topic_id`, `status`, `completed_mcqs` |
+| `app/qbank/[id]` | MCQ Question runner & options | `mcq_questions`, `mcq_options` | `mcq_questions.*`, `mcq_options.*`, `mcq_questions.golden_pearl`, `mcq_questions.peer_percentages` |
+| `app/qbank/[id]` | Quiz session result submission | `quiz_attempts`, `quiz_attempt_answers` | `quiz_attempts.user_id`, `quiz_attempts.topic_id`, `quiz_attempts.mode`, `quiz_attempts.score`, `quiz_attempts.accuracy_percentage`, `quiz_attempts.total_time_seconds`, `quiz_attempt_answers.*` |
+| `app/(tabs)/videos` | Video Subjects list | `subjects` | `id`, `name`, `chapters_count`, `duration_hours`, `video_count`, `categories`, `icon_name` |
+| `app/videos/[id]` | Subject classes & faculty card | `video_classes`, `faculty_profiles` | `video_classes.id`, `video_classes.class_number`, `video_classes.title`, `video_classes.chapter_title`, `video_classes.duration_seconds`, `video_classes.views_count`, `video_classes.rating`, `video_classes.is_high_yield`, `faculty_profiles.name`, `faculty_profiles.title`, `faculty_profiles.avatar_url` |
+| `app/videos/class/[classId]` | Video player stream & details | `video_classes` | `id`, `video_url`, `thumbnail_url`, `description`, `notes_pdf_url`, `notes_pdf_size`, `associated_topic_id` |
+| `app/videos/class/[classId]` | Video timestamps & pearls | `video_timestamps`, `video_pearls` | `video_timestamps.time_string`, `video_timestamps.seconds`, `video_timestamps.title`, `video_timestamps.is_high_yield`, `video_pearls.pearl_text` |
+| `app/videos/class/[classId]` | Playback progress tracker | `user_video_progress` | `user_id`, `video_id`, `last_position_seconds`, `progress_percent`, `status` |
+| `app/(tabs)/tests` | Assessments directory | `assessments` | `id`, `title`, `category`, `tag`, `tag_bg_color`, `tag_text_color`, `tests_count`, `mcqs_count`, `duration_hours`, `icon_name`, `icon_bg_color`, `icon_color` |
+| `app/(tabs)/tests` | Test attempt & rank | `quiz_attempts` | `id`, `user_id`, `assessment_id`, `score`, `rank`, `percentile`, `status` |
+| `app/live/[id]` | Live stream metadata | `live_sessions`, `faculty_profiles` | `live_sessions.id`, `title`, `subject_id`, `chapter`, `status`, `attendees_count`, `start_time`, `duration_minutes`, `stream_url`, `key_topics` |
+| `app/live/[id]` | Live chat message feed | `live_chat_messages` | `id`, `session_id`, `user_id`, `user_name`, `user_avatar`, `role`, `message_text`, `created_at` |
+| `app/live/[id]` | Live polls & user votes | `live_polls`, `live_poll_options`, `live_poll_votes` | `live_polls.id`, `live_polls.question`, `live_poll_options.id`, `live_poll_options.option_text`, `live_poll_votes.user_id`, `live_poll_votes.option_id` |
+| `app/live/[id]` | Hand raise queue | `live_hand_raises` | `session_id`, `user_id`, `queue_position`, `status`, `created_at` |
+| `app/bookmarks` | User study bookmarks | `user_bookmarks` | `id`, `user_id`, `resource_type`, `resource_id`, `title`, `subject_name`, `chapter_name`, `snippet`, `target_route`, `faculty_name`, `difficulty`, `created_at` |
+| `app/daily-goals` | Daily task goals | `user_daily_goals` | `id`, `user_id`, `goal_date`, `title`, `category`, `target_count`, `completed_count`, `unit`, `is_completed`, `time_estimate_mins`, `icon_name`, `color` |
+| `app/daily-goals` | Weekly study activity log | `user_study_activity_logs` | `user_id`, `log_date`, `hours_spent`, `completion_percentage` |
+| `app/downloads` | Offline media registry | `user_downloads` | `id`, `user_id`, `resource_type`, `resource_id`, `title`, `subject_name`, `file_size_mb`, `duration_or_pages`, `quality_badge`, `remote_file_url`, `created_at` |
+| `app/flashcards` | Flashcard decks | `flashcard_decks` | `id`, `subject_name`, `total_cards`, `icon_name`, `accent_color` |
+| `app/flashcards` | Flashcards content | `flashcards` | `id`, `deck_id`, `subject_name`, `chapter_name`, `category`, `question`, `answer`, `high_yield_pearl` |
+| `app/flashcards` | Spaced repetition reviews | `user_flashcard_reviews` | `user_id`, `flashcard_id`, `review_rating`, `repetitions`, `interval_days`, `ease_factor`, `next_review_date` |
+| `app/(tabs)/profile` | Profile info & Pro Pass | `user_profiles` | `id`, `candidate_id`, `full_name`, `email`, `avatar_url`, `is_pro_pass_active`, `pro_pass_expires_at` |
+| `app/(tabs)/profile` | Metric highlights & Rank | `user_performance_summary` *(view/table)* | `days_streak`, `total_mcqs_solved`, `avg_accuracy_percentage`, `national_rank`, `total_candidates_count`, `national_percentile`, `total_video_hours` |
+| `app/(tabs)/profile` | User preferences & settings | `user_settings` | `user_id`, `target_exam_name`, `daily_reminder_times`, `wifi_only_downloads` |
+| `app/(tabs)/profile` | Linked devices | `user_active_devices` | `id`, `user_id`, `device_name`, `device_type`, `last_synced_at`, `is_current_device` |
+
+---
+
+## 5. Existing Database Analysis
+
+### A. Existing Tables
+- **Current State**: None in the mobile app project (`d:\Project Files\onlineCourse\app`).
+- The application currently relies on in-memory TypeScript files (`data/homeData.ts`, `data/chaptersData.ts`, `data/mcqData.ts`, `data/recordedClassesData.ts`, `data/testsData.ts`, `data/liveClassesData.ts`, `data/quickResourcesData.ts`).
+
+### B. Required Tables
+- 22 core tables + 3 supporting junction/session tables are required to fully support the application without mock data.
+
+### C. Existing Columns
+- N/A (Fresh database setup for DocLock).
+
+### D. Missing Columns
+- All application data fields identified in Phase 4 must be created in PostgreSQL.
+
+### E. Unused Columns
+- The schema is strictly pruned to exclude unneeded enterprise or school-management tables (e.g. no student admission numbers, parents, tuition installments, or physical classroom numbers).
+
+### F. Duplicate/Overlapping Elimination
+- **Consolidation 1**: Bookmarks for MCQs, Videos, Pearls, and Flashcards are unified into a single polymorphic `user_bookmarks` table with a `resource_type` enum instead of 4 separate tables.
+- **Consolidation 2**: Quiz attempts for topic drills and grand mock tests share a unified `quiz_attempts` and `quiz_attempt_answers` table with an `assessment_id` or `topic_id` nullable foreign key.
+- **Consolidation 3**: Downloads for videos, slides, and audio share a single `user_downloads` table with media metadata.
+
+---
+
+## 6. Required Tables (Core Schema Architecture)
+
+1. **`user_profiles`**: Registered candidate profile, avatar, candidate number (`#DL-XXXXX`), and Pro Pass subscription status.
+2. **`user_settings`**: Target exam choice (`FMGE`, `NEET PG`), study reminders, and Wi-Fi preferences.
+3. **`user_active_devices`**: Device synchronization list (e.g., MacBook Pro, iPad, Phone).
+4. **`faculty_profiles`**: Medical doctors and educators leading lectures and live classes.
+5. **`subjects`**: The 19 core medical subjects (Anatomy, Pharmacology, Pathology, etc.) with styling and categories.
+6. **`chapters`**: Subject chapter modules.
+7. **`topics`**: Granular clinical topics under chapters (e.g., *Brachial Plexus & Erb's Palsy*).
+8. **`mcq_questions`**: High-yield clinical vignettes with golden pearls and textbook citations.
+9. **`mcq_options`**: 4 options (A-D) per question with peer percentages and specific rationale.
+10. **`quiz_attempts`**: Recorded test and drill sessions (mode, score, time, accuracy, national rank).
+11. **`quiz_attempt_answers`**: User selected option, time spent, strike-through states, and flagged states per question.
+12. **`assessments`**: Standardized tests (Grand Tests, Subject Tests, Mini Mocks, PYQs).
+13. **`video_classes`**: Recorded video lectures with views count, rating, PDF slide URL, and linked MCQ topic.
+14. **`video_timestamps`**: High-yield chapter time markers inside video lectures.
+15. **`video_pearls`**: Bulleted clinical pearls extracted from video lectures.
+16. **`user_video_progress`**: Playback seconds position, watch status, and percentage completed.
+17. **`live_sessions`**: Live interactive lectures (scheduled, upcoming, live) with participant counts.
+18. **`live_chat_messages`**: Real-time websocket chat feed during live streams.
+19. **`live_polls`**: Interactive polls broadcast by faculty during streams.
+20. **`live_poll_options`**: Options for live polls.
+21. **`live_poll_votes`**: Real-time user votes on live poll options.
+22. **`live_hand_raises`**: Direct audio question queue for candidates in live class.
+23. **`flashcard_decks`**: Decks organized by medical subject.
+24. **`flashcards`**: Flashcard question/answer pairs with high-yield golden pearls.
+25. **`user_flashcard_reviews`**: Spaced repetition tracking (SuperMemo SM-2 parameters: repetitions, interval, ease factor).
+26. **`user_daily_goals`**: Daily goal tasks checklist and progress for each candidate.
+27. **`user_study_activity_logs`**: Historical daily study hours and completion metrics for weekly chart.
+28. **`user_bookmarks`**: Unified study locker for saved MCQs, videos, clinical pearls, and flashcards.
+29. **`user_downloads`**: Registry of downloaded media for offline verification and license checking.
+
+---
+
+## 7. Required Columns (Field Specifications)
+
+### 1. `user_profiles`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | references `auth.users.id` | Primary key |
+| `candidate_id` | `text` | Yes | `DL-` + random numbers | Unique candidate badge number (e.g. `#DL-89421`) |
+| `full_name` | `text` | Yes | — | Candidate full name |
+| `email` | `text` | Yes | — | Account email |
+| `avatar_url` | `text` | No | `NULL` | Candidate profile photo URL |
+| `role` | `text` | Yes | `'candidate'` | User role: `'candidate'`, `'faculty'`, `'admin'` |
+| `is_pro_pass_active` | `boolean` | Yes | `false` | Pro Pass premium membership flag |
+| `pro_pass_expires_at` | `timestamptz` | No | `NULL` | Subscription expiration timestamp |
+| `created_at` | `timestamptz` | Yes | `now()` | Timestamp of profile registration |
+| `updated_at` | `timestamptz` | Yes | `now()` | Last profile update timestamp |
+
+### 2. `user_settings`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `user_id` | `uuid` | Yes | references `user_profiles.id` | Primary key |
+| `target_exam_name` | `text` | Yes | `'FMGE (Dec 2026)'` | Target examination |
+| `target_exam_date` | `date` | Yes | `'2026-12-15'` | Target exam target date |
+| `daily_reminder_times` | `text[]` | Yes | `ARRAY['07:30', '21:00']` | Array of reminder time strings |
+| `wifi_only_downloads` | `boolean` | Yes | `true` | Download media only over Wi-Fi |
+| `updated_at` | `timestamptz` | Yes | `now()` | Last preference update |
+
+### 3. `faculty_profiles`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `name` | `text` | Yes | — | Faculty member name (e.g. `Dr. Marcus Vance`) |
+| `title` | `text` | Yes | — | Academic title & specialty |
+| `institution` | `text` | Yes | — | Affiliated institution / Medical board |
+| `avatar_url` | `text` | Yes | — | Profile photo URL |
+| `created_at` | `timestamptz` | Yes | `now()` | Creation timestamp |
+
+### 4. `subjects`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `text` | Yes | — | Slug ID (e.g. `'anatomy'`, `'pharmacology'`) |
+| `name` | `text` | Yes | — | Full subject display name |
+| `chapters_count` | `int` | Yes | `0` | Number of chapters |
+| `mcq_count` | `int` | Yes | `0` | Total MCQs in QBank |
+| `duration_hours` | `int` | Yes | `0` | Total video duration in hours |
+| `video_count` | `int` | Yes | `0` | Total video lectures |
+| `icon_name` | `text` | Yes | — | MaterialIcons glyph string |
+| `icon_bg_color` | `text` | Yes | — | Hex/RGB background color for icon |
+| `icon_color` | `text` | Yes | — | Hex/RGB tint color for icon |
+| `categories` | `text[]` | Yes | — | Array: `['pre-clinical', 'high-yield']` |
+| `created_at` | `timestamptz` | Yes | `now()` | Timestamp |
+
+### 5. `chapters`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `subject_id` | `text` | Yes | references `subjects.id` | Subject foreign key |
+| `chapter_number` | `int` | Yes | `1` | Sequential chapter index |
+| `title` | `text` | Yes | — | Chapter title |
+| `created_at` | `timestamptz` | Yes | `now()` | Creation timestamp |
+
+### 6. `topics`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `chapter_id` | `uuid` | Yes | references `chapters.id` | Chapter foreign key |
+| `title` | `text` | Yes | — | Subheading topic title |
+| `mcq_count` | `int` | Yes | `0` | Questions in topic |
+| `duration_minutes` | `int` | Yes | `20` | Estimated completion time |
+| `is_high_yield` | `boolean` | Yes | `false` | High-Yield tag badge |
+| `is_image_based` | `boolean` | Yes | `false` | Image-based questions tag |
+| `created_at` | `timestamptz` | Yes | `now()` | Creation timestamp |
+
+### 7. `mcq_questions`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `topic_id` | `uuid` | No | references `topics.id` | Associated topic (nullable for test questions) |
+| `assessment_id` | `uuid` | No | references `assessments.id` | Associated assessment/mock test |
+| `question_number` | `int` | Yes | `1` | Sequence order in topic/test |
+| `clinical_vignette` | `text` | Yes | — | Complete case prompt |
+| `image_url` | `text` | No | `NULL` | Diagnostic image / Histology / ECG |
+| `image_caption` | `text` | No | `NULL` | Caption or clinical finding label |
+| `difficulty` | `text` | Yes | `'Moderate'` | `'Easy'`, `'Moderate'`, `'Hard'` |
+| `is_high_yield` | `boolean` | Yes | `false` | High-yield clinical drill |
+| `is_image_based` | `boolean` | Yes | `false` | True if question features an image |
+| `explanation` | `text` | Yes | — | Full clinical rationale |
+| `golden_pearl` | `text` | Yes | — | High-yield memory takeaway |
+| `reference` | `text` | No | `NULL` | Standard medical reference citation |
+| `created_at` | `timestamptz` | Yes | `now()` | Creation timestamp |
+
+### 8. `mcq_options`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `question_id` | `uuid` | Yes | references `mcq_questions.id` | Parent question foreign key |
+| `option_label` | `text` | Yes | — | `'A'`, `'B'`, `'C'`, `'D'` |
+| `option_text` | `text` | Yes | — | Option description text |
+| `is_correct` | `boolean` | Yes | `false` | Correct answer flag |
+| `peer_percentage` | `int` | Yes | `0` | % of students choosing this option |
+| `option_explanation` | `text` | No | `NULL` | Specific distractor rationale |
+
+### 9. `quiz_attempts`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `user_id` | `uuid` | Yes | references `user_profiles.id` | Candidate foreign key |
+| `topic_id` | `uuid` | No | references `topics.id` | Associated topic |
+| `assessment_id` | `uuid` | No | references `assessments.id` | Associated assessment test |
+| `mode` | `text` | Yes | `'practice'` | `'practice'`, `'exam'`, `'study'` |
+| `total_questions` | `int` | Yes | `0` | Total questions in attempt |
+| `answered_count` | `int` | Yes | `0` | Number of answered questions |
+| `correct_count` | `int` | Yes | `0` | Correct answers |
+| `incorrect_count` | `int` | Yes | `0` | Incorrect answers |
+| `skipped_count` | `int` | Yes | `0` | Unanswered / skipped questions |
+| `accuracy_percentage` | `numeric` | Yes | `0.0` | Accuracy % (0 - 100) |
+| `score` | `numeric` | Yes | `0.0` | Weighted exam score |
+| `total_time_seconds` | `int` | Yes | `0` | Time spent on attempt |
+| `status` | `text` | Yes | `'completed'` | `'in_progress'`, `'completed'`, `'abandoned'` |
+| `created_at` | `timestamptz` | Yes | `now()` | Attempt timestamp |
+
+### 10. `quiz_attempt_answers`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `attempt_id` | `uuid` | Yes | references `quiz_attempts.id` | Parent attempt foreign key |
+| `question_id` | `uuid` | Yes | references `mcq_questions.id` | Question foreign key |
+| `selected_option_label`| `text` | No | `NULL` | `'A'`, `'B'`, `'C'`, `'D'` or null if skipped |
+| `is_correct` | `boolean` | Yes | `false` | True if selected matches correct option |
+| `is_flagged` | `boolean` | Yes | `false` | Flagged for review |
+| `time_spent_seconds` | `int` | Yes | `0` | Seconds spent on this item |
+| `struck_through_labels`| `text[]` | Yes | `ARRAY[]::text[]` | Struck-through options (e.g. `['C', 'D']`) |
+
+### 11. `assessments`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `title` | `text` | Yes | — | Test title (e.g. `All-India FMGE GT-13`) |
+| `category` | `text` | Yes | — | `'grand-tests'`, `'subject-tests'`, `'mini-mocks'`, `'pyqs'` |
+| `tag` | `text` | Yes | — | Tag label (e.g. `Ranked`, `High Yield`) |
+| `tag_bg_color` | `text` | Yes | — | Badge background color |
+| `tag_text_color` | `text` | Yes | — | Badge text color |
+| `tests_count` | `int` | Yes | `1` | Number of test papers |
+| `mcqs_count` | `int` | Yes | `300` | Number of MCQs |
+| `duration_hours` | `numeric` | Yes | `3.0` | Allowed duration in hours |
+| `icon_name` | `text` | Yes | — | MaterialIcons glyph |
+| `icon_bg_color` | `text` | Yes | — | Icon container background |
+| `icon_color` | `text` | Yes | — | Icon color |
+| `created_at` | `timestamptz` | Yes | `now()` | Timestamp |
+
+### 12. `video_classes`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `subject_id` | `text` | Yes | references `subjects.id` | Subject foreign key |
+| `faculty_id` | `uuid` | Yes | references `faculty_profiles.id` | Lecturer foreign key |
+| `class_number` | `int` | Yes | `1` | Sequence number in subject |
+| `title` | `text` | Yes | — | Lecture title |
+| `chapter_title` | `text` | Yes | — | Module/Chapter grouping title |
+| `duration` | `text` | Yes | — | Duration string (e.g. `'45:10'`) |
+| `duration_seconds` | `int` | Yes | `0` | Exact video length in seconds |
+| `video_url` | `text` | Yes | — | CDN HLS / MP4 stream URL |
+| `thumbnail_url` | `text` | Yes | — | Preview image URL |
+| `is_high_yield` | `boolean` | Yes | `false` | High-yield status |
+| `views_count` | `text` | Yes | `'0 views'` | Formatted view count |
+| `rating` | `numeric` | Yes | `5.0` | Rating out of 5.0 |
+| `description` | `text` | Yes | — | Comprehensive lecture synopsis |
+| `notes_pdf_url` | `text` | No | `NULL` | Downloadable lecture notes PDF |
+| `notes_pdf_size` | `text` | No | `NULL` | PDF size string (e.g. `'5.2 MB PDF'`) |
+| `associated_topic_id` | `uuid` | No | references `topics.id` | Linked MCQ practice drill |
+| `created_at` | `timestamptz` | Yes | `now()` | Creation timestamp |
+
+### 13. `video_timestamps`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `video_id` | `uuid` | Yes | references `video_classes.id` | Video foreign key |
+| `time_string` | `text` | Yes | — | Formatted time (e.g. `'04:20'`) |
+| `seconds` | `int` | Yes | `0` | Offset in seconds |
+| `title` | `text` | Yes | — | Chapter marker title |
+| `is_high_yield` | `boolean` | Yes | `false` | Highlighted milestone marker |
+
+### 14. `video_pearls`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `video_id` | `uuid` | Yes | references `video_classes.id` | Video foreign key |
+| `pearl_text` | `text` | Yes | — | Concise clinical takeaway statement |
+
+### 15. `user_video_progress`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `user_id` | `uuid` | Yes | references `user_profiles.id` | Candidate foreign key |
+| `video_id` | `uuid` | Yes | references `video_classes.id` | Video foreign key |
+| `last_position_seconds`| `int` | Yes | `0` | Last played position |
+| `progress_percent` | `int` | Yes | `0` | Percentage watched (0-100) |
+| `status` | `text` | Yes | `'unwatched'` | `'unwatched'`, `'in-progress'`, `'completed'` |
+| `updated_at` | `timestamptz` | Yes | `now()` | Last progress update timestamp |
+
+### 16. `live_sessions`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `title` | `text` | Yes | — | Live session title |
+| `subject_id` | `text` | Yes | references `subjects.id` | Subject foreign key |
+| `chapter` | `text` | Yes | — | Subject chapter |
+| `faculty_id` | `uuid` | Yes | references `faculty_profiles.id` | Presenting doctor |
+| `status` | `text` | Yes | `'scheduled'` | `'live'`, `'upcoming'`, `'scheduled'`, `'ended'` |
+| `start_time` | `timestamptz` | Yes | — | Scheduled broadcast start |
+| `duration_minutes` | `int` | Yes | `60` | Scheduled duration |
+| `attendees_count` | `int` | Yes | `0` | Registered / live attendee count |
+| `stream_url` | `text` | No | `NULL` | WebRTC / HLS live stream endpoint |
+| `thumbnail_url` | `text` | Yes | — | Hero card thumbnail |
+| `key_topics` | `text[]` | Yes | `ARRAY[]::text[]` | Bullet topics covered |
+| `created_at` | `timestamptz` | Yes | `now()` | Creation timestamp |
+
+### 17. `live_chat_messages`
+| Column | Type | Required | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | Yes | `gen_random_uuid()` | Primary key |
+| `session_id` | `uuid` | Yes | references `live_sessions.id` | Live session foreign key |
+| `user_id` | `uuid` | Yes | references `user_profiles.id` | Sender foreign key |
+| `message_text` | `text` | Yes | — | Chat message content |
+| `created_at` | `timestamptz` | Yes | `now()` | Message timestamp |
+
+### 18. `live_polls` & `live_poll_options` & `live_poll_votes`
+- `live_polls`: `id` (uuid), `session_id` (fk), `question` (text), `is_active` (bool), `created_at` (timestamptz).
+- `live_poll_options`: `id` (uuid), `poll_id` (fk), `option_text` (text), `option_order` (int).
+- `live_poll_votes`: `id` (uuid), `poll_id` (fk), `option_id` (fk), `user_id` (fk), `created_at` (timestamptz), `UNIQUE(poll_id, user_id)`.
+
+### 19. `live_hand_raises`
+- `id` (uuid), `session_id` (fk), `user_id` (fk), `queue_position` (int), `status` (`'waiting'`, `'active'`, `'dismissed'`), `created_at` (timestamptz).
+
+### 20. `flashcard_decks` & `flashcards` & `user_flashcard_reviews`
+- `flashcard_decks`: `id` (uuid), `subject_name` (text), `icon_name` (text), `accent_color` (text).
+- `flashcards`: `id` (uuid), `deck_id` (fk), `subject_name` (text), `chapter_name` (text), `category` (text), `question` (text), `answer` (text), `high_yield_pearl` (text).
+- `user_flashcard_reviews`: `id` (uuid), `user_id` (fk), `flashcard_id` (fk), `rating` (`'again'`, `'hard'`, `'good'`, `'easy'`), `repetitions` (int), `interval_days` (int), `ease_factor` (numeric), `next_review_date` (date), `reviewed_at` (timestamptz).
+
+### 21. `user_daily_goals`
+- `id` (uuid), `user_id` (fk), `goal_date` (date), `title` (text), `category` (`'mcq'`, `'video'`, `'flashcard'`, `'live'`, `'test'`), `target_count` (int), `completed_count` (int), `unit` (text), `is_completed` (bool), `time_estimate_mins` (int), `icon_name` (text), `color` (text).
+
+### 22. `user_study_activity_logs`
+- `id` (uuid), `user_id` (fk), `log_date` (date), `hours_spent` (numeric), `completion_percentage` (int), `created_at` (timestamptz), `UNIQUE(user_id, log_date)`.
+
+### 23. `user_bookmarks`
+- `id` (uuid), `user_id` (fk), `resource_type` (`'mcq'`, `'video'`, `'pearl'`, `'flashcard'`), `resource_id` (uuid), `title` (text), `subject_name` (text), `chapter_name` (text), `snippet` (text), `target_route` (text), `faculty_name` (text), `difficulty` (text), `created_at` (timestamptz), `UNIQUE(user_id, resource_type, resource_id)`.
+
+### 24. `user_downloads`
+- `id` (uuid), `user_id` (fk), `resource_type` (`'video'`, `'slides'`, `'audio'`), `resource_id` (uuid), `title` (text), `subject_name` (text), `file_size_mb` (numeric), `duration_or_pages` (text), `quality_badge` (text), `remote_file_url` (text), `created_at` (timestamptz), `UNIQUE(user_id, resource_type, resource_id)`.
+
+---
+
+## 8. Database Relationships / ERD Description
+
+```
+[auth.users] 1:1 [user_profiles] 1:1 [user_settings]
+                       │
+                       ├─ 1:N ── [user_active_devices]
+                       ├─ 1:N ── [quiz_attempts] ── 1:N ── [quiz_attempt_answers]
+                       ├─ 1:N ── [user_video_progress]
+                       ├─ 1:N ── [user_flashcard_reviews]
+                       ├─ 1:N ── [user_daily_goals]
+                       ├─ 1:N ── [user_study_activity_logs]
+                       ├─ 1:N ── [user_bookmarks]
+                       ├─ 1:N ── [user_downloads]
+                       ├─ 1:N ── [live_chat_messages]
+                       └─ 1:N ── [live_poll_votes]
+
+[subjects] ── 1:N ── [chapters] ── 1:N ── [topics] ── 1:N ── [mcq_questions] ── 1:N ── [mcq_options]
+    │                                                               │
+    ├─ 1:N ── [video_classes] ──────────────────────────────────────┘ (optional linked topic)
+    │               ├─ 1:N ── [video_timestamps]
+    │               └─ 1:N ── [video_pearls]
+    │
+    └─ 1:N ── [live_sessions] ── 1:N ── [live_polls] ── 1:N ── [live_poll_options]
+                    ├─ 1:N ── [live_chat_messages]
+                    └─ 1:N ── [live_hand_raises]
+
+[faculty_profiles] ── 1:N ── [video_classes]
+                   └─ 1:N ── [live_sessions]
+
+[assessments] ── 1:N ── [mcq_questions]
+              └─ 1:N ── [quiz_attempts]
+
+[flashcard_decks] ── 1:N ── [flashcards] ── 1:N ── [user_flashcard_reviews]
+```
+
+### Relationship Types:
+- **One-to-One (1:1)**:
+  - `auth.users` ↔ `user_profiles` (enforced via primary key FK `user_profiles.id`).
+  - `user_profiles` ↔ `user_settings` (`user_settings.user_id` as primary key).
+- **One-to-Many (1:N)**:
+  - `subjects` → `chapters` → `topics` → `mcq_questions` → `mcq_options`.
+  - `faculty_profiles` → `video_classes` & `live_sessions`.
+  - `video_classes` → `video_timestamps` & `video_pearls`.
+  - `user_profiles` → `quiz_attempts` → `quiz_attempt_answers`.
+  - `user_profiles` → `user_video_progress`, `user_bookmarks`, `user_downloads`, `user_daily_goals`.
+  - `live_sessions` → `live_chat_messages`, `live_polls`, `live_hand_raises`.
+  - `flashcard_decks` → `flashcards`.
+- **Many-to-Many (N:M)**:
+  - `user_profiles` ↔ `flashcards` mediated by `user_flashcard_reviews`.
+  - `user_profiles` ↔ `live_poll_options` mediated by `live_poll_votes`.
+
+---
+
+## 9. Screen → Table → Column Dependency Matrix
+
+| Screen | Requirement | Table | Column(s) | Read/Write |
+| :--- | :--- | :--- | :--- | :--- |
+| `(tabs)/index` | Candidate Name & Avatar | `user_profiles` | `full_name`, `avatar_url` | Read |
+| `(tabs)/index` | Exam Countdown | `user_settings` | `target_exam_name`, `target_exam_date` | Read |
+| `(tabs)/index` | Quick Resource Badges | `user_bookmarks`, `flashcards`, `user_downloads` | `id` count aggregations | Read |
+| `(tabs)/index` | Active Live Stream Card | `live_sessions`, `faculty_profiles` | `title`, `attendees_count`, `faculty_profiles.name` | Read |
+| `(tabs)/index` | Resume Video Card | `user_video_progress`, `video_classes` | `video_classes.title`, `progress_percent` | Read |
+| `(tabs)/index` | Resume Test Card | `quiz_attempts`, `assessments` | `assessments.title`, `answered_count`, `total_questions` | Read |
+| `(tabs)/index` | Resume QBank Drill Card | `quiz_attempts`, `topics` | `topics.title`, `answered_count`, `accuracy_percentage` | Read |
+| `(tabs)/index` | Daily High-Yield MCQ | `mcq_questions`, `mcq_options` | `clinical_vignette`, `option_text`, `is_correct`, `explanation` | Read |
+| `(tabs)/index` | Submit Daily MCQ Answer | `quiz_attempts`, `quiz_attempt_answers` | `selected_option_label`, `is_correct`, `time_spent_seconds` | Write |
+| `(tabs)/qbank` | Subject Directory Catalog | `subjects` | `id`, `name`, `chapters_count`, `mcq_count`, `categories`, `icon_name` | Read |
+| `app/qbank/[id]` | Subject Completion Gauge | `quiz_attempts` | `topic_id`, `score`, `accuracy_percentage` (Aggregated) | Read |
+| `app/qbank/[id]` | Chapter & Subheading Topics | `chapters`, `topics` | `chapters.title`, `topics.title`, `topics.mcq_count`, `topics.duration_minutes`, `is_high_yield`, `is_image_based` | Read |
+| `app/qbank/[id]` | Topic Completion Status | `quiz_attempts` | `topic_id`, `status` | Read |
+| `app/qbank/[id]` | Launch Quiz Questions | `mcq_questions`, `mcq_options` | `clinical_vignette`, `difficulty`, `options.*`, `explanation`, `golden_pearl`, `peer_percentage` | Read |
+| `app/qbank/[id]` | Finish Quiz Attempt | `quiz_attempts` | `mode`, `score`, `correct_count`, `incorrect_count`, `accuracy_percentage`, `total_time_seconds` | Write |
+| `app/qbank/[id]` | Question Answer Audit | `quiz_attempt_answers` | `question_id`, `selected_option_label`, `is_correct`, `time_spent_seconds`, `is_flagged` | Write |
+| `(tabs)/videos` | Video Subjects Catalog | `subjects` | `name`, `duration_hours`, `video_count`, `categories` | Read |
+| `app/videos/[id]` | Chapter Lecture Playlist | `video_classes`, `faculty_profiles` | `class_number`, `title`, `duration`, `views_count`, `rating`, `faculty_profiles.name` | Read |
+| `app/videos/[id]` | Toggle Subject Bookmark | `user_bookmarks` | `resource_type`, `resource_id`, `title` | Write |
+| `app/videos/class/[classId]` | Video Stream Playback | `video_classes` | `video_url`, `description`, `notes_pdf_url`, `associated_topic_id` | Read |
+| `app/videos/class/[classId]` | Video Timestamps | `video_timestamps` | `time_string`, `seconds`, `title`, `is_high_yield` | Read |
+| `app/videos/class/[classId]` | Clinical Pearls Box | `video_pearls` | `pearl_text` | Read |
+| `app/videos/class/[classId]` | Save Video Playback State | `user_video_progress` | `last_position_seconds`, `progress_percent`, `status` | Write |
+| `(tabs)/tests` | Test Directory List | `assessments` | `title`, `category`, `tag`, `tests_count`, `mcqs_count`, `duration_hours` | Read |
+| `(tabs)/tests` | Save Grand Mock Results | `quiz_attempts` | `assessment_id`, `score`, `accuracy_percentage`, `status` | Write |
+| `app/live/[id]` | Live Classroom Data | `live_sessions`, `faculty_profiles` | `title`, `attendees_count`, `stream_url`, `key_topics`, `faculty_profiles.name` | Read |
+| `app/live/[id]` | Realtime Chat Feed | `live_chat_messages` | `user_name`, `message_text`, `created_at` | Read/Write |
+| `app/live/[id]` | Live Poll Broadcast | `live_polls`, `live_poll_options` | `question`, `option_text` | Read |
+| `app/live/[id]` | Cast Poll Vote | `live_poll_votes` | `poll_id`, `option_id`, `user_id` | Write |
+| `app/live/[id]` | Audio Hand Raise Queue | `live_hand_raises` | `session_id`, `user_id`, `queue_position`, `status` | Read/Write |
+| `app/bookmarks` | Saved Study Resources List | `user_bookmarks` | `resource_type`, `title`, `subject_name`, `snippet`, `target_route` | Read |
+| `app/bookmarks` | Remove Bookmark | `user_bookmarks` | `id` | Write (Delete) |
+| `app/daily-goals` | Today's Goal Checklist | `user_daily_goals` | `title`, `category`, `target_count`, `completed_count`, `is_completed` | Read |
+| `app/daily-goals` | Toggle Goal Completion | `user_daily_goals` | `is_completed`, `completed_count` | Write |
+| `app/daily-goals` | Add Custom Goal | `user_daily_goals` | `title`, `category`, `target_count`, `time_estimate_mins` | Write |
+| `app/daily-goals` | Weekly Study Bar Chart | `user_study_activity_logs` | `log_date`, `hours_spent`, `completion_percentage` | Read |
+| `app/downloads` | Offline Media Register | `user_downloads` | `title`, `file_size_mb`, `duration_or_pages`, `quality_badge` | Read |
+| `app/downloads` | Delete Offline Media | `user_downloads` | `id` | Write (Delete) |
+| `app/flashcards` | Flashcard Subject Decks | `flashcard_decks` | `subject_name`, `total_cards`, `icon_name`, `accent_color` | Read |
+| `app/flashcards` | Active Flashcard Cards | `flashcards` | `question`, `answer`, `high_yield_pearl`, `category` | Read |
+| `app/flashcards` | Record Card Review | `user_flashcard_reviews` | `rating`, `repetitions`, `interval_days`, `next_review_date` | Write |
+| `(tabs)/profile` | Candidate Header & Pro Pass | `user_profiles` | `candidate_id`, `full_name`, `email`, `is_pro_pass_active` | Read |
+| `(tabs)/profile` | Performance Rank Strip | `quiz_attempts`, `user_video_progress` | `score`, `accuracy_percentage` (Aggregated) | Read |
+| `(tabs)/profile` | Update Target Exam | `user_settings` | `target_exam_name`, `target_exam_date` | Write |
+| `(tabs)/profile` | Linked Devices Session | `user_active_devices` | `device_name`, `device_type`, `last_synced_at` | Read/Write |
+
+---
+
+## 10. Authentication & User Roles
+
+### Supabase Auth Integration
+- Handled via `supabase.auth.signUp()` and `supabase.auth.signInWithPassword()`.
+- Automatic profile provisioning via PostgreSQL database trigger:
+  ```sql
+  create or replace function public.handle_new_user()
+  returns trigger as $$
+  begin
+    insert into public.user_profiles (id, candidate_id, full_name, email, role, is_pro_pass_active)
+    values (
+      new.id,
+      'DL-' || floor(10000 + random() * 90000)::text,
+      coalesce(new.raw_user_meta_data->>'full_name', 'Doctor Candidate'),
+      new.email,
+      coalesce(new.raw_user_meta_data->>'role', 'candidate'),
+      false
+    );
+    insert into public.user_settings (user_id, target_exam_name, target_exam_date)
+    values (new.id, 'FMGE (Dec 2026)', '2026-12-15');
+    return new;
+  end;
+  $$ language plpgsql security definer;
+  ```
+
+### Defined Roles & Permission Hierarchy
+1. **`candidate`** (Default Student):
+   - Read curriculum data (Subjects, Chapters, Topics, MCQs, Videos, Flashcards, Assessments).
+   - Read/Write own study tracking (Quiz attempts, Video progress, Flashcard reviews, Daily goals, Bookmarks, Downloads, Devices).
+   - Read/Write own Live class interactions (Post in live chat, vote in polls, raise hand).
+2. **`faculty`** (Doctor / Educator):
+   - All candidate read permissions.
+   - Manage/Broadcast Live sessions, launch polls, moderate live chat.
+   - Update faculty profile details.
+3. **`admin`** (System / Academic Director):
+   - Full CRUD across all tables (Publish curriculum MCQs, upload videos, configure assessments, manage candidate subscriptions).
+
+---
+
+## 11. Row Level Security (RLS) Policy Plan
+
+| Table Name | Role | SELECT | INSERT | UPDATE | DELETE | RLS Logic Explanation |
+| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| `user_profiles` | `candidate` | Own record | ❌ | Own record | ❌ | Users can only inspect and edit their own candidate details. |
+| `user_settings` | `candidate` | Own record | Own record | Own record | ❌ | Users manage their own exam target and reminders. |
+| `user_active_devices` | `candidate` | Own record | Own record | Own record | Own record | Users can list and revoke their own linked device sessions. |
+| `subjects`, `chapters`, `topics` | All Authenticated | Public Read | ❌ | ❌ | ❌ | Academic curriculum is readable by all signed-in candidates. |
+| `mcq_questions`, `mcq_options` | All Authenticated | Public Read | ❌ | ❌ | ❌ | Questions readable by candidates; options include peer percentages. |
+| `quiz_attempts` | `candidate` | Own record | Own record | Own record | ❌ | Candidates record and view their own quiz results. |
+| `quiz_attempt_answers` | `candidate` | Own record | Own record | ❌ | ❌ | Answers belong to parent attempt owned by the candidate. |
+| `assessments` | All Authenticated | Public Read | ❌ | ❌ | ❌ | Standardized test catalog is readable by all students. |
+| `video_classes`, `video_timestamps`, `video_pearls` | All Authenticated | Public Read | ❌ | ❌ | ❌ | Lectures and clinical pearls readable by all candidates. |
+| `user_video_progress` | `candidate` | Own record | Own record | Own record | ❌ | Playback tracking is strictly scoped to the authenticated user. |
+| `live_sessions` | All Authenticated | Public Read | ❌ | ❌ | ❌ | Candidates can view scheduled and live streams. |
+| `live_chat_messages` | All Authenticated | Public Read | Own record | ❌ | ❌ | Chat is readable by all participants; users can only post as themselves. |
+| `live_polls`, `live_poll_options` | All Authenticated | Public Read | ❌ | ❌ | ❌ | Polls created by faculty; readable by all candidates in session. |
+| `live_poll_votes` | `candidate` | Own record | Own record | ❌ | ❌ | Single vote per poll enforced by primary/unique constraint. |
+| `live_hand_raises` | `candidate` | Session Read | Own record | Own record | Own record | Candidates raise/lower their own hand in the audio queue. |
+| `flashcard_decks`, `flashcards` | All Authenticated | Public Read | ❌ | ❌ | ❌ | Flashcard study decks readable by all candidates. |
+| `user_flashcard_reviews`| `candidate` | Own record | Own record | Own record | ❌ | Spaced repetition memory reviews are private to candidate. |
+| `user_daily_goals` | `candidate` | Own record | Own record | Own record | Own record | Daily goals are private to candidate. |
+| `user_study_activity_logs` | `candidate` | Own record | Own record | Own record | ❌ | Study hour logs are private to candidate. |
+| `user_bookmarks` | `candidate` | Own record | Own record | ❌ | Own record | Saved bookmarks are private to candidate. |
+| `user_downloads` | `candidate` | Own record | Own record | ❌ | Own record | Offline registry is private to candidate. |
+
+---
+
+## 12. Supabase Storage Plan
+
+| Bucket Name | Purpose | Max Size | Allowed MIME Types | Access Rules |
+| :--- | :--- | :--- | :--- | :--- |
+| `avatars` | Candidate & faculty profile images | 5 MB | `image/jpeg`, `image/png`, `image/webp` | **Public Read**; Authenticated candidate can upload/update only to `avatars/{user_id}/*`. |
+| `lecture-notes` | High-yield PDF slide decks & clinical summaries | 50 MB | `application/pdf` | **Public Read**; Only Admin/Faculty can upload/delete. |
+| `mcq-assets` | Diagnostic images (Histopathology, CT scans, ECGs) | 10 MB | `image/jpeg`, `image/png`, `image/webp` | **Public Read**; Only Admin/Faculty can upload/delete. |
+| `video-thumbnails` | High-resolution video lecture & live stream cards | 5 MB | `image/jpeg`, `image/png`, `image/webp` | **Public Read**; Only Admin/Faculty can upload/delete. |
+
+---
+
+## 13. Required Queries & Mutations
+
+### 1. Home Dashboard (`app/(tabs)/index`)
+- **Query**: Fetch user profile, active live class, daily MCQ, and latest unfinished quiz/video attempt:
+  ```ts
+  const { data: profile } = await supabase.from('user_profiles').select('*').eq('id', user.id).single();
+  const { data: liveClass } = await supabase.from('live_sessions').select('*, faculty:faculty_profiles(*)').eq('status', 'live').limit(1).maybeSingle();
+  const { data: dailyMcq } = await supabase.from('mcq_questions').select('*, options:mcq_options(*)').eq('is_high_yield', true).limit(1).single();
+  const { data: lastVideo } = await supabase.from('user_video_progress').select('*, video:video_classes(*)').eq('user_id', user.id).eq('status', 'in-progress').order('updated_at', { ascending: false }).limit(1).maybeSingle();
+  ```
+
+### 2. QBank Catalog (`app/(tabs)/qbank`)
+- **Query**: Fetch subjects with chapter and MCQ counts:
+  ```ts
+  const { data: subjects } = await supabase.from('subjects').select('*').order('name', { ascending: true });
+  ```
+
+### 3. Subject Detail & Quiz Launcher (`app/qbank/[id]`)
+- **Query**: Fetch chapters, topics, and completion status for subject:
+  ```ts
+  const { data: chapters } = await supabase.from('chapters')
+    .select('*, topics(*)')
+    .eq('subject_id', subjectId)
+    .order('chapter_number', { ascending: true });
+  ```
+- **Mutation**: Submit completed quiz attempt & answers:
+  ```ts
+  const { data: attempt } = await supabase.from('quiz_attempts').insert({
+    user_id: user.id,
+    topic_id: topicId,
+    mode: attemptMode,
+    total_questions: total,
+    answered_count: answered,
+    correct_count: correct,
+    incorrect_count: incorrect,
+    accuracy_percentage: accuracy,
+    score: score,
+    total_time_seconds: timeSpent,
+    status: 'completed',
+  }).select().single();
+
+  await supabase.from('quiz_attempt_answers').insert(
+    answerList.map(a => ({
+      attempt_id: attempt.id,
+      question_id: a.questionId,
+      selected_option_label: a.selectedOption,
+      is_correct: a.isCorrect,
+      time_spent_seconds: a.timeSpent,
+      is_flagged: a.isFlagged,
+      struck_through_labels: a.struckThrough
+    }))
+  );
+  ```
+
+### 4. Video Lecture Player (`app/videos/class/[classId]`)
+- **Query**: Fetch lecture details, timestamps, clinical pearls, and last progress:
+  ```ts
+  const { data: lecture } = await supabase.from('video_classes')
+    .select('*, faculty:faculty_profiles(*), timestamps:video_timestamps(*), pearls:video_pearls(*)')
+    .eq('id', classId)
+    .single();
+  ```
+- **Mutation (Debounced)**: Update playback progress:
+  ```ts
+  await supabase.from('user_video_progress').upsert({
+    user_id: user.id,
+    video_id: classId,
+    last_position_seconds: currentSeconds,
+    progress_percent: Math.round((currentSeconds / durationSeconds) * 100),
+    status: currentSeconds >= durationSeconds - 10 ? 'completed' : 'in-progress',
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'user_id,video_id' });
+  ```
+
+### 5. Live Classroom Realtime Channel (`app/live/[id]`)
+- **Subscription**: Realtime WebSocket channel for chat and poll updates:
+  ```ts
+  const channel = supabase.channel(`live-session-${sessionId}`)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_chat_messages', filter: `session_id=eq.${sessionId}` }, payload => {
+      setMessages(prev => [...prev, payload.new]);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'live_polls', filter: `session_id=eq.${sessionId}` }, payload => {
+      refreshPoll();
+    })
+    .subscribe();
+  ```
+
+---
+
+## 14. Data Flow Architecture
+
+```
+User Action (e.g. Tap Option & Submit Drill)
+   │
+   ▼
+Screen Component (`app/qbank/[id].tsx` / `McqAttemptModal.tsx`)
+   │
+   ▼
+Custom React Hook / Service (`hooks/useQbankSession.ts`)
+   │
+   ▼
+Supabase Client Singleton (`lib/supabase.ts`)
+   │
+   ▼ (HTTPS POST / WebSocket)
+Supabase API Gateway (PostgREST / GoTrue / Realtime)
+   │
+   ▼
+PostgreSQL Engine + Row Level Security (RLS Enforcement: `auth.uid() = user_id`)
+   │
+   ▼
+Target Tables (`quiz_attempts`, `quiz_attempt_answers`)
+   │
+   ▼
+PostgreSQL Trigger (e.g. `update_user_activity_log()`)
+   │
+   ▼
+JSON Response Payload
+   │
+   ▼
+UI State Update (Score Dialog, Golden Pearls, Home Streak Gauge)
+```
+
+- **Validation**: Client-side schema validation via TypeScript interfaces before calling Supabase.
+- **Error Handling**: Graceful fallback states with retry capability.
+- **Offline Resilience**: Offline actions (bookmarks, video download registers) cached via AsyncStorage / local SQLite and synced when network resumes.
+
+---
+
+## 15. Final Recommended Supabase Schema (SQL DDL Script)
+
+```sql
+-- Enable necessary extensions
+create extension if not exists "uuid-ossp";
+create extension if not exists "pgcrypto";
+
+-- ============================================================================
+-- 1. USER PROFILES & SETTINGS
+-- ============================================================================
+create table public.user_profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  candidate_id text unique not null,
+  full_name text not null,
+  email text not null,
+  avatar_url text,
+  role text not null default 'candidate' check (role in ('candidate', 'faculty', 'admin')),
+  is_pro_pass_active boolean not null default false,
+  pro_pass_expires_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table public.user_settings (
+  user_id uuid primary key references public.user_profiles(id) on delete cascade,
+  target_exam_name text not null default 'FMGE (Dec 2026)',
+  target_exam_date date not null default '2026-12-15',
+  daily_reminder_times text[] not null default array['07:30', '21:00'],
+  wifi_only_downloads boolean not null default true,
+  updated_at timestamptz not null default now()
+);
+
+create table public.user_active_devices (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.user_profiles(id) on delete cascade,
+  device_name text not null,
+  device_type text not null,
+  last_synced_at timestamptz not null default now(),
+  is_current_device boolean not null default false
+);
+
+create table public.faculty_profiles (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  title text not null,
+  institution text not null,
+  avatar_url text not null,
+  created_at timestamptz not null default now()
+);
+
+-- ============================================================================
+-- 2. ACADEMIC CURRICULUM: SUBJECTS, CHAPTERS, TOPICS
+-- ============================================================================
+create table public.subjects (
+  id text primary key, -- slug: 'anatomy', 'pharmacology', etc.
+  name text not null,
+  chapters_count int not null default 0,
+  mcq_count int not null default 0,
+  duration_hours int not null default 0,
+  video_count int not null default 0,
+  icon_name text not null,
+  icon_bg_color text not null,
+  icon_color text not null,
+  categories text[] not null default array[]::text[],
+  created_at timestamptz not null default now()
+);
+
+create table public.chapters (
+  id uuid primary key default gen_random_uuid(),
+  subject_id text not null references public.subjects(id) on delete cascade,
+  chapter_number int not null default 1,
+  title text not null,
+  created_at timestamptz not null default now()
+);
+
+create table public.topics (
+  id uuid primary key default gen_random_uuid(),
+  chapter_id uuid not null references public.chapters(id) on delete cascade,
+  title text not null,
+  mcq_count int not null default 0,
+  duration_minutes int not null default 20,
+  is_high_yield boolean not null default false,
+  is_image_based boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- ============================================================================
+-- 3. ASSESSMENTS & STANDARDIZED TESTS
+-- ============================================================================
+create table public.assessments (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  category text not null check (category in ('grand-tests', 'subject-tests', 'mini-mocks', 'pyqs')),
+  tag text not null default 'Available',
+  tag_bg_color text not null,
+  tag_text_color text not null,
+  tests_count int not null default 1,
+  mcqs_count int not null default 300,
+  duration_hours numeric not null default 3.0,
+  icon_name text not null,
+  icon_bg_color text not null,
+  icon_color text not null,
+  created_at timestamptz not null default now()
+);
+
+-- ============================================================================
+-- 4. QBANK QUESTIONS & OPTIONS
+-- ============================================================================
+create table public.mcq_questions (
+  id uuid primary key default gen_random_uuid(),
+  topic_id uuid references public.topics(id) on delete cascade,
+  assessment_id uuid references public.assessments(id) on delete cascade,
+  question_number int not null default 1,
+  clinical_vignette text not null,
+  image_url text,
+  image_caption text,
+  difficulty text not null default 'Moderate' check (difficulty in ('Easy', 'Moderate', 'Hard')),
+  is_high_yield boolean not null default false,
+  is_image_based boolean not null default false,
+  explanation text not null,
+  golden_pearl text not null,
+  reference text,
+  created_at timestamptz not null default now()
+);
+
+create table public.mcq_options (
+  id uuid primary key default gen_random_uuid(),
+  question_id uuid not null references public.mcq_questions(id) on delete cascade,
+  option_label text not null check (option_label in ('A', 'B', 'C', 'D')),
+  option_text text not null,
+  is_correct boolean not null default false,
+  peer_percentage int not null default 0,
+  option_explanation text
+);
+
+-- ============================================================================
+-- 5. CANDIDATE DRILL ATTEMPTS & PROGRESS
+-- ============================================================================
+create table public.quiz_attempts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.user_profiles(id) on delete cascade,
+  topic_id uuid references public.topics(id) on delete set null,
+  assessment_id uuid references public.assessments(id) on delete set null,
+  mode text not null default 'practice' check (mode in ('practice', 'exam', 'study')),
+  total_questions int not null default 0,
+  answered_count int not null default 0,
+  correct_count int not null default 0,
+  incorrect_count int not null default 0,
+  skipped_count int not null default 0,
+  accuracy_percentage numeric not null default 0.0,
+  score numeric not null default 0.0,
+  total_time_seconds int not null default 0,
+  status text not null default 'completed' check (status in ('in_progress', 'completed', 'abandoned')),
+  created_at timestamptz not null default now()
+);
+
+create table public.quiz_attempt_answers (
+  id uuid primary key default gen_random_uuid(),
+  attempt_id uuid not null references public.quiz_attempts(id) on delete cascade,
+  question_id uuid not null references public.mcq_questions(id) on delete cascade,
+  selected_option_label text check (selected_option_label in ('A', 'B', 'C', 'D')),
+  is_correct boolean not null default false,
+  is_flagged boolean not null default false,
+  time_spent_seconds int not null default 0,
+  struck_through_labels text[] not null default array[]::text[]
+);
+
+-- ============================================================================
+-- 6. VIDEO LECTURES & PROGRESS
+-- ============================================================================
+create table public.video_classes (
+  id uuid primary key default gen_random_uuid(),
+  subject_id text not null references public.subjects(id) on delete cascade,
+  faculty_id uuid not null references public.faculty_profiles(id) on delete cascade,
+  class_number int not null default 1,
+  title text not null,
+  chapter_title text not null,
+  duration text not null,
+  duration_seconds int not null default 0,
+  video_url text not null,
+  thumbnail_url text not null,
+  is_high_yield boolean not null default false,
+  views_count text not null default '0 views',
+  rating numeric not null default 5.0,
+  description text not null,
+  notes_pdf_url text,
+  notes_pdf_size text,
+  associated_topic_id uuid references public.topics(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+create table public.video_timestamps (
+  id uuid primary key default gen_random_uuid(),
+  video_id uuid not null references public.video_classes(id) on delete cascade,
+  time_string text not null,
+  seconds int not null default 0,
+  title text not null,
+  is_high_yield boolean not null default false
+);
+
+create table public.video_pearls (
+  id uuid primary key default gen_random_uuid(),
+  video_id uuid not null references public.video_classes(id) on delete cascade,
+  pearl_text text not null
+);
+
+create table public.user_video_progress (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.user_profiles(id) on delete cascade,
+  video_id uuid not null references public.video_classes(id) on delete cascade,
+  last_position_seconds int not null default 0,
+  progress_percent int not null default 0,
+  status text not null default 'unwatched' check (status in ('unwatched', 'in-progress', 'completed')),
+  updated_at timestamptz not null default now(),
+  unique(user_id, video_id)
+);
+
+-- ============================================================================
+-- 7. LIVE CLASSROOM & REALTIME INTERACTIONS
+-- ============================================================================
+create table public.live_sessions (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  subject_id text not null references public.subjects(id) on delete cascade,
+  chapter text not null,
+  faculty_id uuid not null references public.faculty_profiles(id) on delete cascade,
+  status text not null default 'scheduled' check (status in ('live', 'upcoming', 'scheduled', 'ended')),
+  start_time timestamptz not null,
+  duration_minutes int not null default 60,
+  attendees_count int not null default 0,
+  stream_url text,
+  thumbnail_url text not null,
+  key_topics text[] not null default array[]::text[],
+  created_at timestamptz not null default now()
+);
+
+create table public.live_chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.live_sessions(id) on delete cascade,
+  user_id uuid not null references public.user_profiles(id) on delete cascade,
+  message_text text not null,
+  created_at timestamptz not null default now()
+);
+
+create table public.live_polls (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.live_sessions(id) on delete cascade,
+  question text not null,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create table public.live_poll_options (
+  id uuid primary key default gen_random_uuid(),
+  poll_id uuid not null references public.live_polls(id) on delete cascade,
+  option_text text not null,
+  option_order int not null default 1
+);
+
+create table public.live_poll_votes (
+  id uuid primary key default gen_random_uuid(),
+  poll_id uuid not null references public.live_polls(id) on delete cascade,
+  option_id uuid not null references public.live_poll_options(id) on delete cascade,
+  user_id uuid not null references public.user_profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique(poll_id, user_id)
+);
+
+create table public.live_hand_raises (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.live_sessions(id) on delete cascade,
+  user_id uuid not null references public.user_profiles(id) on delete cascade,
+  queue_position int not null default 1,
+  status text not null default 'waiting' check (status in ('waiting', 'active', 'dismissed')),
+  created_at timestamptz not null default now(),
+  unique(session_id, user_id)
+);
+
+-- ============================================================================
+-- 8. FLASHCARDS, DAILY GOALS, BOOKMARKS & DOWNLOADS
+-- ============================================================================
+create table public.flashcard_decks (
+  id text primary key, -- e.g. 'deck-pharm'
+  subject_name text not null,
+  icon_name text not null,
+  accent_color text not null
+);
+
+create table public.flashcards (
+  id uuid primary key default gen_random_uuid(),
+  deck_id text not null references public.flashcard_decks(id) on delete cascade,
+  subject_name text not null,
+  chapter_name text not null,
+  category text not null,
+  question text not null,
+  answer text not null,
+  high_yield_pearl text not null,
+  created_at timestamptz not null default now()
+);
+
+create table public.user_flashcard_reviews (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.user_profiles(id) on delete cascade,
+  flashcard_id uuid not null references public.flashcards(id) on delete cascade,
+  rating text not null check (rating in ('again', 'hard', 'good', 'easy')),
+  repetitions int not null default 0,
+  interval_days int not null default 1,
+  ease_factor numeric not null default 2.5,
+  next_review_date date not null default current_date,
+  reviewed_at timestamptz not null default now(),
+  unique(user_id, flashcard_id)
+);
+
+create table public.user_daily_goals (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.user_profiles(id) on delete cascade,
+  goal_date date not null default current_date,
+  title text not null,
+  category text not null check (category in ('mcq', 'video', 'flashcard', 'live', 'test')),
+  target_count int not null default 1,
+  completed_count int not null default 0,
+  unit text not null,
+  is_completed boolean not null default false,
+  time_estimate_mins int not null default 30,
+  icon_name text not null,
+  color text not null,
+  created_at timestamptz not null default now()
+);
+
+create table public.user_study_activity_logs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.user_profiles(id) on delete cascade,
+  log_date date not null default current_date,
+  hours_spent numeric not null default 0.0,
+  completion_percentage int not null default 0,
+  created_at timestamptz not null default now(),
+  unique(user_id, log_date)
+);
+
+create table public.user_bookmarks (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.user_profiles(id) on delete cascade,
+  resource_type text not null check (resource_type in ('mcq', 'video', 'pearl', 'flashcard')),
+  resource_id uuid not null,
+  title text not null,
+  subject_name text not null,
+  chapter_name text not null,
+  snippet text not null,
+  target_route text,
+  faculty_name text,
+  difficulty text,
+  created_at timestamptz not null default now(),
+  unique(user_id, resource_type, resource_id)
+);
+
+create table public.user_downloads (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.user_profiles(id) on delete cascade,
+  resource_type text not null check (resource_type in ('video', 'slides', 'audio')),
+  resource_id uuid not null,
+  title text not null,
+  subject_name text not null,
+  file_size_mb numeric not null,
+  duration_or_pages text not null,
+  quality_badge text not null,
+  remote_file_url text not null,
+  created_at timestamptz not null default now(),
+  unique(user_id, resource_type, resource_id)
+);
+
+-- ============================================================================
+-- 9. PERFORMANCE INDEXES
+-- ============================================================================
+create index idx_topics_chapter on public.topics(chapter_id);
+create index idx_mcq_questions_topic on public.mcq_questions(topic_id);
+create index idx_mcq_questions_assessment on public.mcq_questions(assessment_id);
+create index idx_mcq_options_question on public.mcq_options(question_id);
+create index idx_quiz_attempts_user on public.quiz_attempts(user_id, created_at desc);
+create index idx_quiz_answers_attempt on public.quiz_attempt_answers(attempt_id);
+create index idx_video_classes_subject on public.video_classes(subject_id);
+create index idx_user_video_progress on public.user_video_progress(user_id, status);
+create index idx_live_chat_session on public.live_chat_messages(session_id, created_at);
+create index idx_user_bookmarks_user on public.user_bookmarks(user_id, resource_type);
+create index idx_user_daily_goals_user on public.user_daily_goals(user_id, goal_date);
+create index idx_user_flashcard_reviews on public.user_flashcard_reviews(user_id, next_review_date);
+
+-- ============================================================================
+-- 10. ROW LEVEL SECURITY (RLS) POLICIES
+-- ============================================================================
+alter table public.user_profiles enable row level security;
+alter table public.user_settings enable row level security;
+alter table public.user_active_devices enable row level security;
+alter table public.subjects enable row level security;
+alter table public.chapters enable row level security;
+alter table public.topics enable row level security;
+alter table public.assessments enable row level security;
+alter table public.mcq_questions enable row level security;
+alter table public.mcq_options enable row level security;
+alter table public.quiz_attempts enable row level security;
+alter table public.quiz_attempt_answers enable row level security;
+alter table public.video_classes enable row level security;
+alter table public.video_timestamps enable row level security;
+alter table public.video_pearls enable row level security;
+alter table public.user_video_progress enable row level security;
+alter table public.live_sessions enable row level security;
+alter table public.live_chat_messages enable row level security;
+alter table public.live_polls enable row level security;
+alter table public.live_poll_options enable row level security;
+alter table public.live_poll_votes enable row level security;
+alter table public.live_hand_raises enable row level security;
+alter table public.flashcard_decks enable row level security;
+alter table public.flashcards enable row level security;
+alter table public.user_flashcard_reviews enable row level security;
+alter table public.user_daily_goals enable row level security;
+alter table public.user_study_activity_logs enable row level security;
+alter table public.user_bookmarks enable row level security;
+alter table public.user_downloads enable row level security;
+
+-- Public Academic Content: Read-only for authenticated users
+create policy "Authenticated candidates can view curriculum" on public.subjects for select to authenticated using (true);
+create policy "Authenticated candidates can view chapters" on public.chapters for select to authenticated using (true);
+create policy "Authenticated candidates can view topics" on public.topics for select to authenticated using (true);
+create policy "Authenticated candidates can view assessments" on public.assessments for select to authenticated using (true);
+create policy "Authenticated candidates can view questions" on public.mcq_questions for select to authenticated using (true);
+create policy "Authenticated candidates can view options" on public.mcq_options for select to authenticated using (true);
+create policy "Authenticated candidates can view videos" on public.video_classes for select to authenticated using (true);
+create policy "Authenticated candidates can view timestamps" on public.video_timestamps for select to authenticated using (true);
+create policy "Authenticated candidates can view pearls" on public.video_pearls for select to authenticated using (true);
+create policy "Authenticated candidates can view live sessions" on public.live_sessions for select to authenticated using (true);
+create policy "Authenticated candidates can view decks" on public.flashcard_decks for select to authenticated using (true);
+create policy "Authenticated candidates can view flashcards" on public.flashcards for select to authenticated using (true);
+
+-- User-Owned Study State: Read & Write restricted to auth.uid()
+create policy "Users can view own profile" on public.user_profiles for select to authenticated using (auth.uid() = id);
+create policy "Users can update own profile" on public.user_profiles for update to authenticated using (auth.uid() = id);
+
+create policy "Users can manage own settings" on public.user_settings for all to authenticated using (auth.uid() = user_id);
+create policy "Users can manage active devices" on public.user_active_devices for all to authenticated using (auth.uid() = user_id);
+create policy "Users can manage quiz attempts" on public.quiz_attempts for all to authenticated using (auth.uid() = user_id);
+create policy "Users can manage attempt answers" on public.quiz_attempt_answers for all to authenticated using (
+  exists (select 1 from public.quiz_attempts where quiz_attempts.id = quiz_attempt_answers.attempt_id and quiz_attempts.user_id = auth.uid())
+);
+create policy "Users can manage video progress" on public.user_video_progress for all to authenticated using (auth.uid() = user_id);
+create policy "Users can manage flashcard reviews" on public.user_flashcard_reviews for all to authenticated using (auth.uid() = user_id);
+create policy "Users can manage daily goals" on public.user_daily_goals for all to authenticated using (auth.uid() = user_id);
+create policy "Users can view activity logs" on public.user_study_activity_logs for all to authenticated using (auth.uid() = user_id);
+create policy "Users can manage bookmarks" on public.user_bookmarks for all to authenticated using (auth.uid() = user_id);
+create policy "Users can manage downloads" on public.user_downloads for all to authenticated using (auth.uid() = user_id);
+
+-- Live Classroom Interactions
+create policy "Anyone can read live chat" on public.live_chat_messages for select to authenticated using (true);
+create policy "Candidates can post live chat" on public.live_chat_messages for insert to authenticated with check (auth.uid() = user_id);
+create policy "Anyone can read active polls" on public.live_polls for select to authenticated using (true);
+create policy "Anyone can read poll options" on public.live_poll_options for select to authenticated using (true);
+create policy "Users can vote in poll" on public.live_poll_votes for insert to authenticated with check (auth.uid() = user_id);
+create policy "Users can view poll votes" on public.live_poll_votes for select to authenticated using (true);
+create policy "Users can manage hand raise" on public.live_hand_raises for all to authenticated using (auth.uid() = user_id);
+```
+
+---
+
+## 16. Implementation Roadmap
+
+### Step 1 — Supabase Project Provisioning & Client Setup
+- Initialize Supabase project via MCP / Web console.
+- Configure `.env` with `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
+- Install `@supabase/supabase-js`, `expo-secure-store`, and polyfills (`react-native-url-polyfill`).
+- Create `lib/supabase.ts` with `SecureStore` session persistence adapter.
+
+### Step 2 — Authentication Flow & Profile Hooks
+- Create authentication screens: `app/auth/login.tsx`, `app/auth/register.tsx`, `app/auth/forgot-password.tsx`.
+- Implement `contexts/AuthContext.tsx` exposing `user`, `profile`, `signIn`, `signUp`, `signOut`.
+- Setup automated database trigger for user creation in `user_profiles` and `user_settings`.
+
+### Step 3 — Database DDL Migration Execution
+- Run migration script in Supabase SQL editor / CLI migrations.
+- Verify 22 tables, foreign keys, indexes, and RLS policies are enabled.
+
+### Step 4 — Data Seeding (Mock Data Transition)
+- Create migration seed script `supabase/seed.sql` populating `subjects`, `chapters`, `topics`, `mcq_questions`, `mcq_options`, `video_classes`, `faculty_profiles`, `flashcards`, and `assessments` directly from existing TypeScript data files.
+
+### Step 5 — Data Access Layer & Hooks
+- Create typed React hooks:
+  - `hooks/useQbank.ts` (Subject list, chapter topics, quiz submission).
+  - `hooks/useVideoLectures.ts` (Lecture details, timestamps, progress upsert).
+  - `hooks/useLiveClass.ts` (Session details, Realtime chat & poll subscription).
+  - `hooks/useStudyLocker.ts` (Bookmarks, Flashcards SM-2 algorithm, Downloads).
+  - `hooks/useDailyGoals.ts` (Goals checklist, weekly activity streak).
+
+### Step 6 — Connect Screens & Replace Static Imports
+- **Home**: Wire `HomeTopHeader`, `QuickStudyResources`, `HomeActivityCarousel`, `MCQCard`.
+- **QBank**: Wire `app/(tabs)/qbank.tsx`, `app/qbank/[id].tsx`, `McqAttemptModal.tsx`.
+- **Videos**: Wire `app/(tabs)/videos.tsx`, `app/videos/[id].tsx`, `app/videos/class/[classId].tsx`.
+- **Tests**: Wire `app/(tabs)/tests.tsx`.
+- **Live Classroom**: Wire `app/live/[id].tsx` with Supabase Realtime channel.
+- **Locker**: Wire `bookmarks.tsx`, `daily-goals.tsx`, `downloads.tsx`, `flashcards.tsx`.
+- **Profile**: Wire `app/(tabs)/profile.tsx` with dynamic streak, solved counts, and preferences.
+
+### Step 7 — Verification & Cleanup
+- Audit code for unused static mock imports.
+- Validate offline resilience and network reconnect sync.
+
+---
+
+## 17. Testing & Validation Checklist
+
+- [ ] **Authentication**: Successful email/password sign-up, sign-in, session recovery after app restart.
+- [ ] **RLS Security**: Verify that a user cannot query another user's `quiz_attempts`, `user_video_progress`, or `user_bookmarks`.
+- [ ] **QBank Drill Runner**: Mode selection, timer countdown, answer submission, peer percentage display, results calculation.
+- [ ] **Video Progress**: Debounced playback position upsert; resume card shows correct progress on Home screen.
+- [ ] **Live Realtime Chat**: Multi-client instant chat propagation without latency or message dropping.
+- [ ] **Live Polls**: Realtime vote count aggregation and single-vote constraint enforcement.
+- [ ] **Flashcards SM-2**: Card difficulty ratings update `repetitions`, `ease_factor`, and `next_review_date`.
+- [ ] **Daily Goals**: Toggle task completion reflects in progress circle and persists across app reloads.
+- [ ] **Bookmarks**: Adding and removing bookmarks reflects instantly across Home counters and Bookmarks screen.
+- [ ] **Network Reconnection**: App recovers gracefully from offline state and syncs pending progress.
+
+---
+
+## 18. Potential Issues / Risks & Mitigations
+
+1. **High-Frequency Video Progress Writes**:
+   - *Risk*: Flooding database with updates every second during video playback.
+   - *Mitigation*: Debounce updates to every 10–15 seconds and on video pause/exit.
+2. **Chat WebSocket Concurrency in High-Attendance Live Streams**:
+   - *Risk*: Rate-limiting or UI stutter with 1,000+ simultaneous chatters.
+   - *Mitigation*: Supabase Realtime broadcast channels with client-side batching and rate limiting (max 1 message per 3 seconds per candidate).
+3. **Offline Drill Completion Sync**:
+   - *Risk*: User finishes a 50-question mock test in airplane mode and loses results.
+   - *Mitigation*: Store completed attempt in SQLite / AsyncStorage queue; sync automatically when `NetInfo` reports connectivity.
+4. **Large Test Submissions**:
+   - *Risk*: Inserting 300 question answers individually.
+   - *Mitigation*: Single batch `insert` query for all answers within a database transaction.
+
+---
+
+## 19. Future Scalability Considerations
+
+- **Database Partitioning**: As the platform scales to hundreds of thousands of candidates, partition `quiz_attempt_answers` and `live_chat_messages` by month or user ID hash.
+- **Read Caching**: Use TanStack Query with stale-while-revalidate caching to eliminate duplicate reads for static curriculum tables (`subjects`, `mcq_questions`, `video_classes`).
+- **Storage CDN**: Place Cloudflare or CloudFront in front of Supabase Storage buckets for high-bandwidth video lecture caching and low-latency global streaming.
+- **Automated Leaderboard / Rank Calculation**: Use scheduled Postgres functions (`pg_cron`) to recalculate national percentile ranks hourly rather than on-demand.

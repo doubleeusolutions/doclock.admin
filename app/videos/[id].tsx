@@ -17,13 +17,15 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import {
-  getSubjectVideoDetail,
   RecordedClass,
   SubjectVideoDetail,
 } from '@/data/recordedClassesData';
 import { VideoSubjectDetailHeader } from '@/components/videos/VideoSubjectDetailHeader';
 import { RecordedClassCard } from '@/components/videos/RecordedClassCard';
 import { Colors, Motion } from '@/theme';
+import { useVideoLectures } from '@/hooks/useVideoLectures';
+import { useEffect } from 'react';
+import { ActivityIndicator } from 'react-native';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -32,7 +34,10 @@ export default function SubjectClassesScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const subjectId = (id as string) || 'anatomy';
+  const { getSubjectClasses } = useVideoLectures();
 
+  const [loading, setLoading] = useState(true);
+  const [subjectDetail, setSubjectDetail] = useState<SubjectVideoDetail | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
   const [isBookmarked, setIsBookmarked] = useState(false);
@@ -47,13 +52,28 @@ export default function SubjectClassesScreen() {
     transform: [{ scale: collapseBtnScale.value }],
   }));
 
-  const subjectDetail: SubjectVideoDetail = useMemo(
-    () => getSubjectVideoDetail(subjectId),
-    [subjectId]
-  );
+  useEffect(() => {
+    let isMounted = true;
+    const loadClasses = async () => {
+      try {
+        setLoading(true);
+        const data = await getSubjectClasses(subjectId);
+        if (isMounted) {
+          setSubjectDetail(data);
+        }
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+    loadClasses();
+    return () => {
+      isMounted = false;
+    };
+  }, [subjectId, getSubjectClasses]);
 
   // Extract distinct chapter titles for horizontal filter tabs
   const distinctChapters = useMemo(() => {
+    if (!subjectDetail) return [];
     const titles: string[] = [];
     subjectDetail.classes.forEach((c) => {
       if (!titles.includes(c.chapterTitle)) {
@@ -61,10 +81,11 @@ export default function SubjectClassesScreen() {
       }
     });
     return titles;
-  }, [subjectDetail.classes]);
+  }, [subjectDetail]);
 
   // Filter classes by category or specific chapter and search term
   const filteredClasses = useMemo(() => {
+    if (!subjectDetail) return [];
     const q = searchQuery.trim().toLowerCase();
 
     return subjectDetail.classes.filter((cls) => {
@@ -128,6 +149,7 @@ export default function SubjectClassesScreen() {
   };
 
   const handleBookmarkToggle = () => {
+    if (!subjectDetail) return;
     setIsBookmarked((prev) => {
       const next = !prev;
       Alert.alert(
@@ -162,6 +184,27 @@ export default function SubjectClassesScreen() {
     });
     setExpandedChapters(nextState);
   };
+
+  if (loading) {
+    return (
+      <View style={[styles.safeArea, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center', gap: 12 }]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={{ fontSize: 14, color: Colors.onSurfaceVariant }}>Loading video classes from database...</Text>
+      </View>
+    );
+  }
+
+  if (!subjectDetail) {
+    return (
+      <View style={[styles.safeArea, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center', padding: 24, gap: 12 }]}>
+        <MaterialIcons name="ondemand-video" size={48} color={Colors.primary} />
+        <Text style={{ fontSize: 18, fontWeight: '700', color: Colors.onSurface }}>Subject Not Found</Text>
+        <Text style={{ fontSize: 14, color: Colors.onSurfaceVariant, textAlign: 'center' }}>
+          This subject has no recorded classes in the database yet.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.safeArea, { paddingTop: insets.top }]}>

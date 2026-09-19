@@ -6,7 +6,6 @@ import {
   ScrollView,
   Pressable,
   TextInput,
-  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,12 +15,14 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
+import { ActivityIndicator } from 'react-native';
 import {
-  BOOKMARKS_DATA,
   BookmarkItem,
   BookmarkType,
 } from '@/data/quickResourcesData';
 import { Colors, Motion } from '@/theme';
+import { useStudyLocker } from '@/hooks/useStudyLocker';
+import { useAlert } from '@/contexts/AlertContext';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -37,12 +38,14 @@ const SUBJECT_FILTERS = [
 export default function BookmarksScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { showAlert } = useAlert();
+  const { bookmarks, removeBookmark, loading } = useStudyLocker();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [activeTypeTab, setActiveTypeTab] = useState<'all' | BookmarkType>('all');
   const [selectedSubject, setSelectedSubject] = useState('All Subjects');
-  const [items, setItems] = useState<BookmarkItem[]>(BOOKMARKS_DATA);
+  const items = bookmarks;
 
   // Back button animation
   const backBtnScale = useSharedValue(1);
@@ -70,17 +73,44 @@ export default function BookmarksScreen() {
   }, [items, activeTypeTab, selectedSubject, searchQuery]);
 
   const handleToggleBookmark = (id: string, title: string) => {
-    setItems((prev) => prev.filter((item) => item.id !== id));
-    Alert.alert('Bookmark Removed', `"${title}" removed from saved bookmarks.`);
+    showAlert({
+      title: 'Remove Bookmark',
+      message: `Remove "${title}" from your saved high-yield study locker?`,
+      type: 'destructive',
+      icon: 'bookmark-remove',
+      confirmText: 'Remove',
+      cancelText: 'Keep Bookmark',
+      onConfirm: () => {
+        removeBookmark(id);
+      },
+    });
   };
 
   const handleOpenItem = (item: BookmarkItem) => {
     if (item.targetRoute) {
       router.push(item.targetRoute as any);
     } else {
-      Alert.alert(item.title, item.snippet);
+      showAlert({
+        title: item.title,
+        message: item.snippet,
+        type: 'info',
+        icon: 'bookmark',
+        badgeText: item.subject,
+        confirmText: 'Done',
+      });
     }
   };
+
+  if (loading) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={{ marginTop: 12, color: Colors.onSurfaceVariant, fontSize: 13 }}>
+          Loading saved bookmarks...
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -106,7 +136,7 @@ export default function BookmarksScreen() {
           <View style={styles.headerTitleGroup}>
             <Text style={styles.headerTitle}>Saved Bookmarks</Text>
             <Text style={styles.headerSubtitle}>
-              {items.length} items • 19 medical subjects
+              {items.length} {items.length === 1 ? 'item' : 'items'} saved
             </Text>
           </View>
         </View>

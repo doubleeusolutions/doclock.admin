@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,7 +6,6 @@ import {
   ScrollView,
   Image,
   Pressable,
-  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -19,11 +18,12 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Colors, Motion } from '@/theme';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
+import { useAuth } from '@/contexts/AuthContext';
+import { useAlert } from '@/contexts/AlertContext';
+import { useStudyLocker } from '@/hooks/useStudyLocker';
+import { supabase } from '@/lib/supabase';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
-const CANDIDATE_AVATAR =
-  'https://lh3.googleusercontent.com/aida/AEtjO1WrNKft3VUsykTbV1ItwjNJQmd84SMBvWBg_4iH0n9TsrPwIvUcPvVh258rHJpWT2Ijli5I7sjQJwdiXsxSPZq78Mh4ZsBn0QWPYPDuDi0n_CgmKJVd5nY6eVB8EaJxvGi9uTqipin1M6am_zaMmNizlWzJHcm3ML2XTb0SeF2TRgueUB4FbY13VvNkCyMB6KqMyld6s9RlPedJdZTVIAxTbZOHLI1yFnAeexdAZrnVHOz6fFOKo5JdJvM';
 
 interface ResourceItemData {
   id: string;
@@ -33,41 +33,6 @@ interface ResourceItemData {
   tint: string;
   iconColor: string;
 }
-
-const STUDY_RESOURCES: ResourceItemData[] = [
-  {
-    id: 'bookmarks',
-    name: 'Bookmarks',
-    count: '142 items',
-    icon: 'bookmark',
-    tint: '#eaf0ff',
-    iconColor: Colors.primary,
-  },
-  {
-    id: 'flashcards',
-    name: 'Flashcards',
-    count: '580 cards',
-    icon: 'style',
-    tint: '#eef2ff',
-    iconColor: '#4f46e5',
-  },
-  {
-    id: 'downloads',
-    name: 'Downloads',
-    count: '12 videos',
-    icon: 'download-for-offline',
-    tint: '#ecfdf5',
-    iconColor: '#059669',
-  },
-  {
-    id: 'notes',
-    name: 'My Notes',
-    count: '34 topics',
-    icon: 'sticky-note-2',
-    tint: '#fffbeb',
-    iconColor: '#d97706',
-  },
-];
 
 interface SettingItemData {
   id: string;
@@ -84,8 +49,87 @@ interface SettingItemData {
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { showAlert } = useAlert();
+  const { user, profile, settings, signOut, updateSettings } = useAuth();
+  const { bookmarks, flashcards, downloads } = useStudyLocker();
   const [avatarError, setAvatarError] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [stats, setStats] = useState({
+    mcqsSolved: 0,
+    accuracy: 0,
+    streakDays: 0,
+    gtRank: null as number | null,
+    totalCandidates: 0,
+    videoHours: 0,
+    videoSubjectsStarted: 0,
+  });
+
+  useEffect(() => {
+    if (!user) return;
+
+    // Fetch quiz stats
+    supabase
+      .from('quiz_attempts')
+      .select('score, total_questions')
+      .eq('user_id', user.id)
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          const totalSolved = data.reduce((sum, a) => sum + (a.total_questions || 0), 0);
+          const totalCorrect = data.reduce((sum, a) => sum + (a.score || 0), 0);
+          const acc = totalSolved > 0 ? Math.round((totalCorrect / totalSolved) * 100) : 0;
+          setStats((prev) => ({ ...prev, mcqsSolved: totalSolved, accuracy: acc }));
+        }
+      });
+
+    // Fetch study streak
+    supabase
+      .from('user_study_activity_logs')
+      .select('id')
+      .eq('user_id', user.id)
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setStats((prev) => ({ ...prev, streakDays: data.length }));
+        }
+      });
+  }, [user]);
+
+  const studyResources: ResourceItemData[] = useMemo(
+    () => [
+      {
+        id: 'bookmarks',
+        name: 'Bookmarks',
+        count: `${bookmarks.length} ${bookmarks.length === 1 ? 'item' : 'items'}`,
+        icon: 'bookmark',
+        tint: '#eaf0ff',
+        iconColor: Colors.primary,
+      },
+      {
+        id: 'flashcards',
+        name: 'Flashcards',
+        count: `${flashcards.length} ${flashcards.length === 1 ? 'card' : 'cards'}`,
+        icon: 'style',
+        tint: '#eef2ff',
+        iconColor: '#4f46e5',
+      },
+      {
+        id: 'downloads',
+        name: 'Downloads',
+        count: `${downloads.length} ${downloads.length === 1 ? 'file' : 'files'}`,
+        icon: 'download-for-offline',
+        tint: '#ecfdf5',
+        iconColor: '#059669',
+      },
+      {
+        id: 'notes',
+        name: 'My Notes',
+        count: '0 notes',
+        icon: 'sticky-note-2',
+        tint: '#fffbeb',
+        iconColor: '#d97706',
+      },
+    ],
+    [bookmarks.length, flashcards.length, downloads.length]
+  );
 
   const editBtnScale = useSharedValue(1);
   const editBtnAnimStyle = useAnimatedStyle(() => ({
@@ -93,56 +137,210 @@ export default function ProfileScreen() {
   }));
 
   const handleEditProfile = () => {
-    Alert.alert('Edit Profile', 'Opening candidate profile & preferences editor.');
+    showAlert({
+      title: 'Candidate Profile',
+      message: 'Candidate credentials, enrolled exam batch, and personal details.',
+      type: 'info',
+      icon: 'account-circle',
+      badgeText: profile?.role === 'candidate' ? 'Verified Candidate' : 'Faculty',
+      details: [
+        { label: 'Name', value: profile?.full_name || 'Candidate' },
+        { label: 'Candidate ID', value: profile?.candidate_id || 'DOC-2026-9821' },
+        { label: 'Email', value: profile?.email || 'alex.mercer@doclock.org' },
+      ],
+      confirmText: 'Done',
+    });
   };
 
   const handleDetailedReport = () => {
-    Alert.alert('Detailed Analytics', 'Opening comprehensive performance breakdown report.');
+    showAlert({
+      title: 'Academic Analytics',
+      message: 'Comprehensive performance breakdown based on real Supabase drill attempts.',
+      type: 'info',
+      icon: 'insights',
+      badgeText: 'Live Cloud Sync',
+      badgeBgColor: '#d7e2ff',
+      badgeColor: Colors.primary,
+      details: [
+        { label: 'Study Streak', value: `${stats.streakDays} Days Continuous` },
+        { label: 'Overall Accuracy', value: `${stats.accuracy}%` },
+        { label: 'MCQs Solved', value: `${stats.mcqsSolved} Questions` },
+        { label: 'Video Lecture Time', value: `${stats.videoHours} Hours` },
+      ],
+      confirmText: 'Close Report',
+    });
   };
 
   const handleResourcePress = (item: ResourceItemData) => {
     if (item.id === 'bookmarks') router.push('/bookmarks');
     else if (item.id === 'flashcards') router.push('/flashcards');
     else if (item.id === 'downloads') router.push('/downloads');
-    else Alert.alert(item.name, `Opening ${item.name} study locker.`);
+    else {
+      showAlert({
+        title: item.name,
+        message: `Opening your personal ${item.name} study locker and offline resources.`,
+        type: 'info',
+        icon: item.icon,
+        confirmText: 'Got It',
+      });
+    }
   };
 
   const handleChangeExam = () => {
-    Alert.alert('Target Exam', 'Select target medical entrance examination.', [
-      { text: 'FMGE (Dec 2026)', style: 'default' },
-      { text: 'NEET PG 2026', style: 'default' },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    showAlert({
+      title: 'Target Medical Exam',
+      message:
+        'Select your target examination. QBank filters, grand mocks, countdowns, and recall drills will synchronize accordingly.',
+      type: 'select',
+      icon: 'school',
+      badgeText: 'Curriculum Filter',
+      options: [
+        {
+          label: 'FMGE (Dec 2026)',
+          value: 'FMGE (Dec 2026)',
+          badge: 'Recommended',
+          subtitle: 'Foreign Medical Graduate Screening Examination',
+        },
+        {
+          label: 'NEET PG 2026',
+          value: 'NEET PG 2026',
+          subtitle: 'National Eligibility cum Entrance Test (Postgraduate)',
+        },
+        {
+          label: 'USMLE Step 1',
+          value: 'USMLE Step 1',
+          subtitle: 'United States Medical Licensing Examination',
+        },
+        {
+          label: 'INICET (Nov 2026)',
+          value: 'INICET (Nov 2026)',
+          subtitle: 'Institute of National Importance Combined Entrance Test',
+        },
+      ],
+      selectedOptionValue: settings?.target_exam_name || 'FMGE (Dec 2026)',
+      confirmText: 'Set Target Exam',
+      cancelText: 'Cancel',
+      onConfirm: (selectedExam) => {
+        if (selectedExam) {
+          updateSettings({ target_exam_name: selectedExam });
+        }
+      },
+    });
   };
 
   const handleSubscription = () => {
-    Alert.alert('DocLock Pro Pass', 'Active Subscription valid until December 2026.');
+    showAlert({
+      title: 'DocLock Pro Pass',
+      message:
+        'Full access to all 19 medical subjects, National Grand Mocks, 50,000+ MCQs, clinical pearls, and offline video streaming.',
+      type: 'info',
+      icon: 'workspace-premium',
+      iconColor: '#5b4aba',
+      iconBgColor: '#e5deff',
+      badgeText: 'Active Pro Member',
+      badgeBgColor: '#e5deff',
+      badgeColor: '#5b4aba',
+      details: [
+        { label: 'Status', value: 'Active • Pro Member' },
+        { label: 'Valid Through', value: 'December 31, 2026' },
+        { label: 'Offline Downloads', value: 'Unlimited Access' },
+        { label: 'Faculty Support', value: '24/7 Doubt Resolution' },
+      ],
+      confirmText: 'Done',
+    });
   };
 
   const handleReminders = () => {
-    Alert.alert('Daily Study Reminders', 'Reminders currently scheduled for 07:30 AM & 09:00 PM.');
+    showAlert({
+      title: 'Daily Study Reminders',
+      message:
+        'Automated revision notifications are active to help maintain your daily recall rhythm and study streak.',
+      type: 'info',
+      icon: 'alarm',
+      iconColor: '#006780',
+      iconBgColor: '#b9eaff',
+      details: [
+        { label: 'Morning High-Yield Drill', value: '07:30 AM' },
+        { label: 'Evening MCQ Revision', value: '09:00 PM' },
+        { label: 'Status', value: 'Push Notifications Enabled' },
+      ],
+      confirmText: 'Got It',
+    });
   };
 
   const handleLinkedDevices = () => {
-    Alert.alert('Linked Devices', 'MacBook Pro • Chrome Web Active (Last synced 10m ago).');
+    showAlert({
+      title: 'Linked Devices & Sync',
+      message:
+        'Your progress, bookmarks, flashcard reviews, and notes are encrypted and synchronized in real time.',
+      type: 'info',
+      icon: 'devices',
+      details: [
+        { label: 'Current Device', value: 'Android Device (Active Now)' },
+        { label: 'Web Session', value: 'Chrome Desktop (Synced 10m ago)' },
+        { label: 'Cloud Sync', value: 'Supabase PostgreSQL' },
+      ],
+      confirmText: 'Done',
+    });
   };
 
   const handleSupport = () => {
-    Alert.alert('Academic Doubt Support', 'Connecting to 24/7 DocLock Medical Faculty Helpdesk.');
+    showAlert({
+      title: 'Academic Doubt Support',
+      message:
+        'Connect directly with AIIMS & CMC faculty educators to resolve conceptual doubts, review ambiguous questions, and discuss golden pearls.',
+      type: 'info',
+      icon: 'support-agent',
+      details: [
+        { label: 'Response Time', value: '< 2 Hours' },
+        { label: 'Faculty Active', value: 'Clinical & Pre-Clinical Chairs' },
+        { label: 'Channel', value: 'In-App Medical Helpdesk' },
+      ],
+      confirmText: 'Contact Faculty',
+    });
   };
 
   const handleStorage = () => {
-    Alert.alert('Storage & Cache', '1.8 GB cached of 12 offline videos. Tap to clear cache.', [
-      { text: 'Clear Cache', style: 'destructive' },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    showAlert({
+      title: 'Storage & Cache',
+      message:
+        '1.8 GB of offline videos, high-yield audio pearls, and PDF notes are cached locally on this device.',
+      type: 'destructive',
+      icon: 'cleaning-services',
+      details: [
+        { label: 'Cached Media', value: '1.8 GB' },
+        { label: 'Offline Videos', value: '12 Classes' },
+        { label: 'High-Yield PDFs', value: '38 Chapters' },
+      ],
+      confirmText: 'Clear Cache',
+      cancelText: 'Cancel',
+      onConfirm: () => {
+        showAlert({
+          title: 'Cache Cleared',
+          message:
+            'All local cached media has been freed. Offline files can be re-downloaded anytime over Wi-Fi.',
+          type: 'success',
+          icon: 'check-circle',
+          confirmText: 'Done',
+        });
+      },
+    });
   };
 
   const handleSignOut = () => {
-    Alert.alert('Log Out', 'Are you sure you want to log out of DocLock?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Log Out', style: 'destructive' },
-    ]);
+    showAlert({
+      title: 'Log Out of DocLock',
+      message:
+        'Are you sure you want to log out? Your study streak, mock exam rankings, and saved bookmarks remain safely stored in your cloud account.',
+      type: 'destructive',
+      icon: 'logout',
+      confirmText: 'Log Out',
+      cancelText: 'Stay Logged In',
+      onConfirm: async () => {
+        await signOut();
+        router.replace('/auth/login' as any);
+      },
+    });
   };
 
   // Preference items list
@@ -151,7 +349,7 @@ export default function ProfileScreen() {
       {
         id: 'target_exam',
         title: 'Target Exam',
-        subtitle: 'FMGE (Foreign Medical Graduate Exam)',
+        subtitle: settings?.target_exam_name || 'FMGE (Foreign Medical Graduate Exam)',
         icon: 'school',
         tint: '#eaf0ff',
         iconColor: Colors.primary,
@@ -219,13 +417,13 @@ export default function ProfileScreen() {
   // Filter items if searching
   const query = searchQuery.trim().toLowerCase();
   const filteredResources = useMemo(() => {
-    if (!query) return STUDY_RESOURCES;
-    return STUDY_RESOURCES.filter(
+    if (!query) return studyResources;
+    return studyResources.filter(
       (r) =>
         r.name.toLowerCase().includes(query) ||
         r.count.toLowerCase().includes(query)
     );
-  }, [query]);
+  }, [query, studyResources]);
 
   const filteredAccountPreferences = useMemo(() => {
     if (!query) return accountPreferences;
@@ -252,7 +450,19 @@ export default function ProfileScreen() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onSettingsPress={() =>
-          Alert.alert('App Settings', 'DocLock Exam Prep v2.4.1\nCandidate: Alex Rivera')
+          showAlert({
+            title: 'DocLock Medical App',
+            message:
+              'High-yield exam preparation platform for FMGE, NEET-PG, and medical licensing.',
+            type: 'info',
+            icon: 'verified',
+            details: [
+              { label: 'Version', value: 'v2.4.1 (Build 2026.09)' },
+              { label: 'Candidate', value: profile?.full_name || 'Alex Mercer' },
+              { label: 'Database', value: 'Supabase PostgreSQL' },
+            ],
+            confirmText: 'Close',
+          })
         }
       />
 
@@ -279,7 +489,9 @@ export default function ProfileScreen() {
                 <View style={styles.targetRow}>
                   <View style={styles.targetBadge}>
                     <View style={styles.pulseDot} />
-                    <Text style={styles.targetBadgeText}>FMGE Target • Dec 2026</Text>
+                    <Text style={styles.targetBadgeText}>
+                      {settings?.target_exam_name || 'Medical Entrance Target'}
+                    </Text>
                   </View>
 
                   <AnimatedPressable
@@ -302,9 +514,9 @@ export default function ProfileScreen() {
                 {/* Candidate Info Row */}
                 <View style={styles.userRow}>
                   <View style={styles.avatarWrapper}>
-                    {!avatarError ? (
+                    {profile?.avatar_url && !avatarError ? (
                       <Image
-                        source={{ uri: CANDIDATE_AVATAR }}
+                        source={{ uri: profile.avatar_url }}
                         style={styles.avatarImage}
                         resizeMode="cover"
                         onError={() => setAvatarError(true)}
@@ -322,18 +534,24 @@ export default function ProfileScreen() {
                   <View style={styles.userInfoCol}>
                     <View style={styles.nameRow}>
                       <Text style={styles.userName} numberOfLines={1}>
-                        Alex Rivera
+                        {profile?.full_name || 'Candidate'}
                       </Text>
                       <MaterialIcons name="verified" size={18} color="#fcd34d" />
                     </View>
                     <Text style={styles.userEmail} numberOfLines={1}>
-                      alex.rivera.med@gmail.com
+                      {profile?.email || user?.email || 'Candidate Account'}
                     </Text>
                     <View style={styles.badgeStrip}>
                       <View style={styles.proPassPill}>
-                        <Text style={styles.proPassText}>PRO PASS ACTIVE</Text>
+                        <Text style={styles.proPassText}>
+                          {profile?.is_pro_pass_active ? 'PRO PASS ACTIVE' : 'CANDIDATE PASS'}
+                        </Text>
                       </View>
-                      <Text style={styles.candidateId}>#DL-89421</Text>
+                      {profile?.candidate_id ? (
+                        <Text style={styles.candidateId}>
+                          #{profile.candidate_id}
+                        </Text>
+                      ) : null}
                     </View>
                   </View>
                 </View>
@@ -344,18 +562,18 @@ export default function ProfileScreen() {
                     <Text style={styles.metricColLabel}>DAYS STREAK</Text>
                     <View style={styles.metricValRow}>
                       <MaterialIcons name="whatshot" size={16} color="#fcd34d" />
-                      <Text style={styles.metricValText}>28</Text>
+                      <Text style={styles.metricValText}>{stats.streakDays}</Text>
                     </View>
                   </View>
 
                   <View style={styles.metricCol}>
                     <Text style={styles.metricColLabel}>MCQS SOLVED</Text>
-                    <Text style={styles.metricValText}>3,420</Text>
+                    <Text style={styles.metricValText}>{stats.mcqsSolved.toLocaleString()}</Text>
                   </View>
 
                   <View style={styles.metricCol}>
                     <Text style={styles.metricColLabel}>AVG ACCURACY</Text>
-                    <Text style={[styles.metricValText, styles.accuracyColor]}>76.4%</Text>
+                    <Text style={[styles.metricValText, styles.accuracyColor]}>{stats.accuracy}%</Text>
                   </View>
                 </View>
               </View>
@@ -387,10 +605,15 @@ export default function ProfileScreen() {
                     <MaterialIcons name="military-tech" size={18} color={Colors.primary} />
                   </View>
                   <Text style={styles.analyticsValue}>
-                    #412 <Text style={styles.analyticsValueSub}>/ 14.2k</Text>
+                    {stats.gtRank ? `#${stats.gtRank}` : '--'}{' '}
+                    <Text style={styles.analyticsValueSub}>
+                      {stats.totalCandidates > 0 ? `/ ${stats.totalCandidates}` : ''}
+                    </Text>
                   </Text>
                   <View style={styles.greenTag}>
-                    <Text style={styles.greenTagText}>Top 2.9% National</Text>
+                    <Text style={styles.greenTagText}>
+                      {stats.gtRank ? 'Ranked Candidate' : 'Take GT to Rank'}
+                    </Text>
                   </View>
                 </View>
 
@@ -401,10 +624,14 @@ export default function ProfileScreen() {
                     <MaterialIcons name="play-circle" size={18} color="#4f46e5" />
                   </View>
                   <Text style={styles.analyticsValue}>
-                    48.5 <Text style={styles.analyticsValueSub}>hrs</Text>
+                    {stats.videoHours.toFixed(1)} <Text style={styles.analyticsValueSub}>hrs</Text>
                   </Text>
                   <View style={styles.blueTag}>
-                    <Text style={styles.blueTagText}>18/19 Subjects Started</Text>
+                    <Text style={styles.blueTagText}>
+                      {stats.videoSubjectsStarted > 0
+                        ? `${stats.videoSubjectsStarted}/19 Subjects Started`
+                        : '0/19 Subjects Started'}
+                    </Text>
                   </View>
                 </View>
               </View>
@@ -471,7 +698,7 @@ export default function ProfileScreen() {
                   item={{
                     id: 'logout',
                     title: 'Log Out',
-                    subtitle: 'Sign out of Alex Rivera on this device',
+                    subtitle: `Sign out of ${profile?.full_name || 'your account'} on this device`,
                     icon: 'logout',
                     tint: '#fee2e2',
                     iconColor: '#dc2626',

@@ -6,7 +6,6 @@ import {
   ScrollView,
   Pressable,
   Image,
-  Alert,
   Switch,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -17,20 +16,24 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
+import { ActivityIndicator } from 'react-native';
 import {
-  DOWNLOADS_DATA,
   DownloadedItem,
   DownloadType,
 } from '@/data/quickResourcesData';
 import { Colors, Motion } from '@/theme';
+import { useStudyLocker } from '@/hooks/useStudyLocker';
+import { useAlert } from '@/contexts/AlertContext';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export default function DownloadsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { showAlert } = useAlert();
+  const { downloads, removeDownload, clearAllDownloads, loading } = useStudyLocker();
 
-  const [items, setItems] = useState<DownloadedItem[]>(DOWNLOADS_DATA);
+  const items = downloads;
   const [activeTypeTab, setActiveTypeTab] = useState<'all' | DownloadType>('all');
   const [wifiOnly, setWifiOnly] = useState(true);
 
@@ -50,44 +53,56 @@ export default function DownloadsScreen() {
   }, [items, activeTypeTab]);
 
   const handleDeleteItem = (id: string, title: string) => {
-    Alert.alert(
-      'Delete Download',
-      `Delete "${title}" from offline storage? You can re-download it anytime.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            setItems((prev) => prev.filter((i) => i.id !== id));
-          },
-        },
-      ]
-    );
+    showAlert({
+      title: 'Delete Offline Download',
+      message: `Remove "${title}" from your device storage? You can re-download it anytime over Wi-Fi.`,
+      type: 'destructive',
+      icon: 'delete-outline',
+      confirmText: 'Delete Download',
+      cancelText: 'Keep File',
+      onConfirm: () => {
+        removeDownload(id);
+      },
+    });
   };
 
   const handleClearAll = () => {
-    Alert.alert(
-      'Clear All Offline Downloads',
-      'Free up all downloaded media from local device cache?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear All',
-          style: 'destructive',
-          onPress: () => setItems([]),
-        },
-      ]
-    );
+    showAlert({
+      title: 'Clear All Offline Downloads',
+      message:
+        'Free up internal device storage? All downloaded video lectures, high-yield audio, and PDF notes will be removed.',
+      type: 'destructive',
+      icon: 'delete-sweep',
+      confirmText: 'Clear All Downloads',
+      cancelText: 'Cancel',
+      onConfirm: () => clearAllDownloads(),
+    });
   };
 
   const handlePlayItem = (item: DownloadedItem) => {
     if (item.targetRoute) {
       router.push(item.targetRoute as any);
     } else {
-      Alert.alert('Offline Playback', `Playing "${item.title}" from local device cache.`);
+      showAlert({
+        title: 'Offline Playback',
+        message: `Now playing "${item.title}" from your high-speed offline cache.`,
+        type: 'info',
+        icon: 'play-circle',
+        confirmText: 'Got It',
+      });
     }
   };
+
+  if (loading) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={{ marginTop: 12, color: Colors.onSurfaceVariant, fontSize: 13 }}>
+          Loading offline downloads...
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>

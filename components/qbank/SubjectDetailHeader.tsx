@@ -43,6 +43,18 @@ export const SubjectDetailHeader: React.FC<SubjectDetailHeaderProps> = ({
   const searchBtnScale = useSharedValue(1);
   const bookmarkBtnScale = useSharedValue(1);
 
+  const backBtnAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: backBtnScale.value }],
+  }));
+
+  const searchBtnAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: searchBtnScale.value }],
+  }));
+
+  const bookmarkBtnAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: bookmarkBtnScale.value }],
+  }));
+
   useEffect(() => {
     if (isSearchOpen) {
       setTimeout(() => inputRef.current?.focus(), 50);
@@ -115,12 +127,7 @@ export const SubjectDetailHeader: React.FC<SubjectDetailHeaderProps> = ({
                 onPressOut={() => {
                   backBtnScale.value = withSpring(1, Motion.tactileSpring);
                 }}
-                style={[
-                  styles.backButton,
-                  useAnimatedStyle(() => ({
-                    transform: [{ scale: backBtnScale.value }],
-                  })),
-                ]}
+                style={[styles.backButton, backBtnAnimStyle]}
                 accessibilityRole="button"
                 accessibilityLabel="Back to Qbank"
               >
@@ -153,12 +160,7 @@ export const SubjectDetailHeader: React.FC<SubjectDetailHeaderProps> = ({
                 onPressOut={() => {
                   searchBtnScale.value = withSpring(1, Motion.tactileSpring);
                 }}
-                style={[
-                  styles.iconButton,
-                  useAnimatedStyle(() => ({
-                    transform: [{ scale: searchBtnScale.value }],
-                  })),
-                ]}
+                style={[styles.iconButton, searchBtnAnimStyle]}
                 accessibilityRole="button"
                 accessibilityLabel="Search topics"
               >
@@ -177,12 +179,7 @@ export const SubjectDetailHeader: React.FC<SubjectDetailHeaderProps> = ({
                 onPressOut={() => {
                   bookmarkBtnScale.value = withSpring(1, Motion.tactileSpring);
                 }}
-                style={[
-                  styles.iconButton,
-                  useAnimatedStyle(() => ({
-                    transform: [{ scale: bookmarkBtnScale.value }],
-                  })),
-                ]}
+                style={[styles.iconButton, bookmarkBtnAnimStyle]}
                 accessibilityRole="button"
                 accessibilityLabel="Saved bookmarks"
               >

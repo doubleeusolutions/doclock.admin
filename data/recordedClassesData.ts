@@ -25,6 +25,7 @@ export interface RecordedClass {
   duration: string;
   durationSeconds: number;
   thumbnailUrl: string;
+  videoUrl?: string;
   isHighYield: boolean;
   progressPercent: number;
   status: 'unwatched' | 'in-progress' | 'completed';
@@ -111,7 +112,8 @@ const ANATOMY_CLASSES: RecordedClass[] = [
     duration: '45:10',
     durationSeconds: 2710,
     thumbnailUrl:
-      'https://images.unsplash.com/photo-1532938911079-1b06ac7ceec7?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=800&auto=format&fit=crop&q=80',
+    videoUrl: 'https://vjs.zencdn.net/v/oceans.mp4',
     isHighYield: true,
     progressPercent: 100,
     status: 'completed',
@@ -147,7 +149,8 @@ const ANATOMY_CLASSES: RecordedClass[] = [
     duration: '38:25',
     durationSeconds: 2305,
     thumbnailUrl:
-      'https://images.unsplash.com/photo-1579684385127-1ef15d508118?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1559757175-5700dde675bc?w=800&auto=format&fit=crop&q=80',
+    videoUrl: 'https://cdn.plyr.io/static/demo/View_From_A_Blue_Moon_Trailer-576p.mp4',
     isHighYield: true,
     progressPercent: 65,
     status: 'in-progress',
@@ -181,6 +184,7 @@ const ANATOMY_CLASSES: RecordedClass[] = [
     durationSeconds: 2570,
     thumbnailUrl:
       'https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?w=800&auto=format&fit=crop&q=80',
+    videoUrl: 'https://vjs.zencdn.net/v/oceans.mp4',
     isHighYield: true,
     progressPercent: 0,
     status: 'unwatched',
@@ -214,6 +218,7 @@ const ANATOMY_CLASSES: RecordedClass[] = [
     durationSeconds: 3030,
     thumbnailUrl:
       'https://images.unsplash.com/photo-1559757175-5700dde675bc?w=800&auto=format&fit=crop&q=80',
+    videoUrl: 'https://cdn.plyr.io/static/demo/View_From_A_Blue_Moon_Trailer-576p.mp4',
     isHighYield: true,
     progressPercent: 0,
     status: 'unwatched',
@@ -248,6 +253,7 @@ const ANATOMY_CLASSES: RecordedClass[] = [
     durationSeconds: 2775,
     thumbnailUrl:
       'https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=800&auto=format&fit=crop&q=80',
+    videoUrl: 'https://vjs.zencdn.net/v/oceans.mp4',
     isHighYield: true,
     progressPercent: 0,
     status: 'unwatched',
@@ -281,6 +287,7 @@ const ANATOMY_CLASSES: RecordedClass[] = [
     durationSeconds: 2500,
     thumbnailUrl:
       'https://images.unsplash.com/photo-1516549655169-df83a0774514?w=800&auto=format&fit=crop&q=80',
+    videoUrl: 'https://cdn.plyr.io/static/demo/View_From_A_Blue_Moon_Trailer-576p.mp4',
     isHighYield: true,
     progressPercent: 0,
     status: 'unwatched',
@@ -341,6 +348,7 @@ export function getSubjectVideoDetail(subjectId: string): SubjectVideoDetail {
       durationSeconds: 2660,
       thumbnailUrl:
         'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=800&auto=format&fit=crop&q=80',
+      videoUrl: 'https://vjs.zencdn.net/v/oceans.mp4',
       isHighYield: true,
       progressPercent: 100,
       status: 'completed',

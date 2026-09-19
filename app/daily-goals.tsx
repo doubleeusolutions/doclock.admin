@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
-  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,20 +14,19 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
-import {
-  DAILY_GOAL_TASKS,
-  WEEKLY_ACTIVITY,
-  DailyGoalTask,
-} from '@/data/quickResourcesData';
+import { ActivityIndicator } from 'react-native';
+import { DailyGoalTask } from '@/data/quickResourcesData';
 import { Colors, Motion } from '@/theme';
+import { useDailyGoals } from '@/hooks/useDailyGoals';
+import { useAlert } from '@/contexts/AlertContext';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export default function DailyGoalsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-
-  const [tasks, setTasks] = useState<DailyGoalTask[]>(DAILY_GOAL_TASKS);
+  const { showAlert } = useAlert();
+  const { tasks, weeklyActivity, toggleTask, addCustomGoal, loading } = useDailyGoals();
 
   // Back button animation
   const backBtnScale = useSharedValue(1);
@@ -41,51 +39,82 @@ export default function DailyGoalsScreen() {
     [tasks]
   );
   const totalCount = tasks.length;
-  const progressPercent = Math.round((completedCount / totalCount) * 100);
-
-  const toggleTask = (id: string) => {
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === id) {
-          const nextState = !t.isCompleted;
-          return {
-            ...t,
-            isCompleted: nextState,
-            completedCount: nextState ? t.targetCount : 0,
-          };
-        }
-        return t;
-      })
-    );
-  };
+  const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
   const handleAddGoal = () => {
-    Alert.alert(
-      'Add Custom Study Goal',
-      'Set target subject, number of MCQs or video lectures for today.',
-      [
-        { text: 'Cancel', style: 'cancel' },
+    showAlert({
+      title: 'Add Daily Study Goal',
+      message: 'Select a high-yield study task to schedule for today.',
+      type: 'select',
+      icon: 'add-task',
+      options: [
         {
-          text: 'Add 20 Microbiology MCQs',
-          onPress: () => {
-            const newTask: DailyGoalTask = {
-              id: `goal-${Date.now()}`,
-              title: 'Microbiology High-Yield MCQs (Bacteriology)',
-              category: 'mcq',
-              targetCount: 20,
-              completedCount: 0,
-              unit: 'MCQs',
-              isCompleted: false,
-              timeEstimateMins: 30,
-              icon: 'coronavirus',
-              color: '#059669',
-            };
-            setTasks((prev) => [...prev, newTask]);
-          },
+          label: '20 Microbiology MCQs',
+          value: 'microbiology',
+          badge: 'High-Yield',
+          subtitle: 'Bacteriology & Virology recall drill',
         },
-      ]
-    );
+        {
+          label: '15 Pharmacology MCQs',
+          value: 'pharmacology',
+          badge: 'High-Yield',
+          subtitle: 'Antimicrobials & ANS mechanisms',
+        },
+        {
+          label: '1 Anatomy Video Lecture',
+          value: 'anatomy',
+          subtitle: 'Upper Limb brachial plexus class',
+        },
+      ],
+      selectedOptionValue: 'microbiology',
+      confirmText: 'Add to Today',
+      cancelText: 'Cancel',
+      onConfirm: (val) => {
+        if (val === 'anatomy') {
+          addCustomGoal({
+            title: 'Upper Limb Clinical Anatomy Class',
+            category: 'video',
+            targetCount: 1,
+            unit: 'Video',
+            timeEstimateMins: 45,
+            icon: 'accessibility',
+            color: '#0059b9',
+          });
+        } else if (val === 'pharmacology') {
+          addCustomGoal({
+            title: 'Pharmacology High-Yield Recall Drill',
+            category: 'mcq',
+            targetCount: 15,
+            unit: 'MCQs',
+            timeEstimateMins: 20,
+            icon: 'medication',
+            color: '#006780',
+          });
+        } else {
+          addCustomGoal({
+            title: 'Microbiology High-Yield MCQs (Bacteriology)',
+            category: 'mcq',
+            targetCount: 20,
+            unit: 'MCQs',
+            timeEstimateMins: 30,
+            icon: 'coronavirus',
+            color: '#059669',
+          });
+        }
+      },
+    });
   };
+
+  if (loading) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={{ marginTop: 12, color: Colors.onSurfaceVariant, fontSize: 13 }}>
+          Loading daily study goals...
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -111,7 +140,7 @@ export default function DailyGoalsScreen() {
           <View style={styles.headerTitleGroup}>
             <Text style={styles.headerTitle}>Daily Study Goals</Text>
             <Text style={styles.headerSubtitle}>
-              Day 48 of 180 • FMGE Target 2026
+              {completedCount} of {totalCount} goals completed today
             </Text>
           </View>
         </View>
@@ -190,7 +219,7 @@ export default function DailyGoalsScreen() {
           </View>
 
           <View style={styles.weekGrid}>
-            {WEEKLY_ACTIVITY.map((item) => (
+            {weeklyActivity.map((item) => (
               <View
                 key={item.dayName}
                 style={[
@@ -249,59 +278,72 @@ export default function DailyGoalsScreen() {
           </View>
 
           <View style={styles.tasksList}>
-            {tasks.map((task) => (
-              <Pressable
-                key={task.id}
-                onPress={() => toggleTask(task.id)}
-                style={[
-                  styles.taskCard,
-                  task.isCompleted && styles.taskCardCompleted,
-                ]}
-              >
-                <MaterialIcons
-                  name={
-                    task.isCompleted
-                      ? 'check-circle'
-                      : 'radio-button-unchecked'
-                  }
-                  size={22}
-                  color={task.isCompleted ? '#0059b9' : '#8a92a6'}
-                />
-
-                <View style={styles.taskInfo}>
-                  <Text
-                    style={[
-                      styles.taskTitle,
-                      task.isCompleted && styles.taskTitleCompleted,
-                    ]}
-                  >
-                    {task.title}
-                  </Text>
-                  <View style={styles.taskMetaRow}>
-                    <Text style={styles.taskProgressText}>
-                      {task.completedCount} / {task.targetCount} {task.unit}
-                    </Text>
-                    <Text style={styles.taskDivider}>•</Text>
-                    <Text style={styles.taskEstText}>
-                      ~{task.timeEstimateMins} mins
-                    </Text>
-                  </View>
-                </View>
-
-                <View
+            {tasks.length === 0 ? (
+              <View style={styles.emptyTasksBox}>
+                <MaterialIcons name="flag" size={40} color={Colors.primary} />
+                <Text style={styles.emptyTasksTitle}>No Goals Set For Today</Text>
+                <Text style={styles.emptyTasksSubtitle}>
+                  Set custom targets for MCQs or video classes to stay on track.
+                </Text>
+                <Pressable onPress={handleAddGoal} style={styles.addGoalBtn}>
+                  <Text style={styles.addGoalBtnText}>Set First Target</Text>
+                </Pressable>
+              </View>
+            ) : (
+              tasks.map((task) => (
+                <Pressable
+                  key={task.id}
+                  onPress={() => toggleTask(task.id)}
                   style={[
-                    styles.categoryIconBox,
-                    { backgroundColor: `${task.color}14` },
+                    styles.taskCard,
+                    task.isCompleted && styles.taskCardCompleted,
                   ]}
                 >
                   <MaterialIcons
-                    name={task.icon}
-                    size={16}
-                    color={task.color}
+                    name={
+                      task.isCompleted
+                        ? 'check-circle'
+                        : 'radio-button-unchecked'
+                    }
+                    size={22}
+                    color={task.isCompleted ? '#0059b9' : '#8a92a6'}
                   />
-                </View>
-              </Pressable>
-            ))}
+
+                  <View style={styles.taskInfo}>
+                    <Text
+                      style={[
+                        styles.taskTitle,
+                        task.isCompleted && styles.taskTitleCompleted,
+                      ]}
+                    >
+                      {task.title}
+                    </Text>
+                    <View style={styles.taskMetaRow}>
+                      <Text style={styles.taskProgressText}>
+                        {task.completedCount} / {task.targetCount} {task.unit}
+                      </Text>
+                      <Text style={styles.taskDivider}>•</Text>
+                      <Text style={styles.taskEstText}>
+                        ~{task.timeEstimateMins} mins
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View
+                    style={[
+                      styles.categoryIconBox,
+                      { backgroundColor: `${task.color}14` },
+                    ]}
+                  >
+                    <MaterialIcons
+                      name={task.icon}
+                      size={16}
+                      color={task.color}
+                    />
+                  </View>
+                </Pressable>
+              ))
+            )}
           </View>
         </View>
 
@@ -631,5 +673,38 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  emptyTasksBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#e2e7f2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  emptyTasksTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#181c22',
+  },
+  emptyTasksSubtitle: {
+    fontSize: 12.5,
+    color: '#727782',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  addGoalBtn: {
+    marginTop: 6,
+    backgroundColor: '#0059b9',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 9999,
+  },
+  addGoalBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
   },
 });

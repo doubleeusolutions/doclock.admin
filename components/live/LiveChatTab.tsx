@@ -17,7 +17,7 @@ export interface ChatMessage {
   id: string;
   senderName: string;
   senderRole: 'faculty' | 'moderator' | 'student';
-  avatar?: string;
+  avatar?: string | null;
   message: string;
   timestamp: string;
   isPinned?: boolean;
@@ -25,82 +25,19 @@ export interface ChatMessage {
   likesCount?: number;
 }
 
-const INITIAL_MESSAGES: ChatMessage[] = [
-  {
-    id: 'msg-pinned-1',
-    senderName: 'Dr. Marcus Vance, MD',
-    senderRole: 'faculty',
-    avatar:
-      'https://images.unsplash.com/photo-1622253692010-333f2da6031d?w=400&auto=format&fit=crop&q=80',
-    message:
-      'Welcome everyone! Please note that Class III agents prolong Action Potential Duration (APD) and Effective Refractory Period (ERP) by blocking I_Kr potassium channels.',
-    timestamp: '15:02',
-    isPinned: true,
-    likesCount: 142,
-  },
-  {
-    id: 'msg-01',
-    senderName: 'Dr. Rahul Sharma',
-    senderRole: 'moderator',
-    message:
-      'Live Poll #1 is open in the Polls tab. Solve the clinical vignette on WPW syndrome contraindications.',
-    timestamp: '15:08',
-    likesCount: 28,
-  },
-  {
-    id: 'msg-02',
-    senderName: 'Dr. Priya Nair',
-    senderRole: 'student',
-    avatar:
-      'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&auto=format&fit=crop&q=80',
-    message:
-      'Why is Amiodarone considered relatively safe in structural heart disease compared to Flecainide?',
-    timestamp: '15:10',
-    isQuestion: true,
-    likesCount: 45,
-  },
-  {
-    id: 'msg-03',
-    senderName: 'Dr. Marcus Vance, MD',
-    senderRole: 'faculty',
-    avatar:
-      'https://images.unsplash.com/photo-1622253692010-333f2da6031d?w=400&auto=format&fit=crop&q=80',
-    message:
-      '@Dr. Priya Great question. Flecainide was shown in CAST trial to cause 1c proarrhythmic mortality in ischaemic/post-MI myocardium due to marked conduction slowing. Amiodarone does not increase total mortality.',
-    timestamp: '15:12',
-    likesCount: 89,
-  },
-  {
-    id: 'msg-04',
-    senderName: 'Dr. Amit Patel',
-    senderRole: 'student',
-    avatar:
-      'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80',
-    message:
-      'The classic mnemonic for Class IA: Double Quarter Pounder (Disopyramide, Quinidine, Procainamide)! 🍔',
-    timestamp: '15:14',
-    likesCount: 64,
-  },
-  {
-    id: 'msg-05',
-    senderName: 'Dr. Sarah Connor',
-    senderRole: 'student',
-    avatar:
-      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80',
-    message:
-      'Does Adenosine cause bronchoconstriction via A1 or A2B receptors?',
-    timestamp: '15:16',
-    isQuestion: true,
-    likesCount: 19,
-  },
-];
-
 interface LiveChatTabProps {
+  messages?: ChatMessage[];
+  onSendMessage?: (text: string, isQuestion?: boolean) => void;
   onSendReaction: (emoji: string) => void;
 }
 
-export const LiveChatTab: React.FC<LiveChatTabProps> = ({ onSendReaction }) => {
-  const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
+export const LiveChatTab: React.FC<LiveChatTabProps> = ({
+  messages: propMessages,
+  onSendMessage,
+  onSendReaction,
+}) => {
+  const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
+  const messages = propMessages !== undefined ? propMessages : localMessages;
   const [inputText, setInputText] = useState('');
   const [isQuestionMode, setIsQuestionMode] = useState(false);
   const [filterMode, setFilterMode] = useState<'all' | 'questions' | 'faculty'>(
@@ -115,27 +52,33 @@ export const LiveChatTab: React.FC<LiveChatTabProps> = ({ onSendReaction }) => {
 
   const handleSendMessage = () => {
     if (!inputText.trim()) return;
+    const text = inputText.trim();
 
-    const newMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      senderName: 'Alex (You)',
-      senderRole: 'student',
-      message: inputText.trim(),
-      timestamp: 'Just now',
-      isQuestion: isQuestionMode,
-      likesCount: 0,
-    };
-
-    setMessages((prev) => [...prev, newMsg]);
+    if (onSendMessage) {
+      onSendMessage(text, isQuestionMode);
+    } else {
+      const newMsg: ChatMessage = {
+        id: `msg-${Date.now()}`,
+        senderName: 'Alex (You)',
+        senderRole: 'student',
+        message: text,
+        timestamp: 'Just now',
+        isQuestion: isQuestionMode,
+        likesCount: 0,
+      };
+      setLocalMessages((prev) => [...prev, newMsg]);
+    }
     setInputText('');
   };
 
   const handleLikeMessage = (id: string) => {
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === id ? { ...m, likesCount: (m.likesCount || 0) + 1 } : m
-      )
-    );
+    if (propMessages === undefined) {
+      setLocalMessages((prev) =>
+        prev.map((m) =>
+          m.id === id ? { ...m, likesCount: (m.likesCount || 0) + 1 } : m
+        )
+      );
+    }
   };
 
   return (
@@ -207,16 +150,33 @@ export const LiveChatTab: React.FC<LiveChatTabProps> = ({ onSendReaction }) => {
       {/* Messages Scroll Area */}
       <ScrollView
         style={styles.messagesScroll}
-        contentContainerStyle={styles.messagesContent}
+        contentContainerStyle={[
+          styles.messagesContent,
+          filteredMessages.length === 0 && styles.messagesContentEmpty,
+        ]}
         showsVerticalScrollIndicator={false}
       >
-        {filteredMessages.map((msg) => (
-          <ChatMessageItem
-            key={msg.id}
-            msg={msg}
-            onLike={() => handleLikeMessage(msg.id)}
-          />
-        ))}
+        {filteredMessages.length === 0 ? (
+          <View style={styles.emptyMessagesContainer}>
+            <MaterialIcons name="chat-bubble-outline" size={40} color="#94a3b8" />
+            <Text style={styles.emptyMessagesTitle}>No messages yet</Text>
+            <Text style={styles.emptyMessagesSub}>
+              {filterMode === 'questions'
+                ? 'No doubts posted yet. Ask a question to get faculty guidance.'
+                : filterMode === 'faculty'
+                ? 'No faculty announcements in this session yet.'
+                : 'Join the conversation! Post questions or cheer on your peers.'}
+            </Text>
+          </View>
+        ) : (
+          filteredMessages.map((msg) => (
+            <ChatMessageItem
+              key={msg.id}
+              msg={msg}
+              onLike={() => handleLikeMessage(msg.id)}
+            />
+          ))
+        )}
       </ScrollView>
 
       {/* Sticky Bottom Input Bar */}
@@ -437,6 +397,27 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 10,
     paddingBottom: 20,
+  },
+  messagesContentEmpty: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  emptyMessagesContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    gap: 8,
+  },
+  emptyMessagesTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  emptyMessagesSub: {
+    fontSize: 12.5,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 18,
   },
 
   /* Message Card */

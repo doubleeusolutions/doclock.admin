@@ -17,14 +17,14 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import {
-  getRecordedClassById,
-  getSubjectVideoDetail,
   RecordedClass,
   ClassTimestamp,
 } from '@/data/recordedClassesData';
 import { ClassDetailHeader } from '@/components/videos/ClassDetailHeader';
 import { VideoPlayer } from '@/components/videos/VideoPlayer';
 import { Colors, Motion } from '@/theme';
+import { useVideoLectures } from '@/hooks/useVideoLectures';
+import { ActivityIndicator } from 'react-native';
 
 type DetailTabType = 'timestamps' | 'pearls' | 'playlist';
 
@@ -34,69 +34,57 @@ export default function ClassDetailScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { classId } = useLocalSearchParams<{ classId: string }>();
+  const { getClassDetail, getSubjectClasses, savePlaybackProgress } = useVideoLectures();
 
-  const classData: RecordedClass = useMemo(() => {
-    const found = getRecordedClassById((classId as string) || 'anat-cls-01');
-    return (
-      found || {
-        id: 'anat-cls-01',
-        subjectId: 'anatomy',
-        classNumber: 1,
-        title: 'Brachial Plexus: Roots, Trunks & Clinical Neuropathies',
-        chapterTitle: 'Upper Limb Anatomy',
-        faculty: {
-          name: 'Dr. Sarah Jenkins, MD',
-          title: 'Professor of Clinical Anatomy',
-          avatar:
-            'https://images.unsplash.com/photo-1594824813629-652391b1a030?w=400&auto=format&fit=crop&q=80',
-          institution: 'DocLock Medical Faculty',
-        },
-        duration: '45:10',
-        durationSeconds: 2710,
-        thumbnailUrl:
-          'https://images.unsplash.com/photo-1532938911079-1b06ac7ceec7?w=800&auto=format&fit=crop&q=80',
-        isHighYield: true,
-        progressPercent: 30,
-        status: 'in-progress',
-        viewsCount: '18.4k views',
-        rating: 4.9,
-        description: 'Comprehensive high-yield breakdown of the Brachial Plexus.',
-        timestamps: [],
-        highYieldPearls: [],
-        notesPdfSize: '5.2 MB PDF',
-        associatedMcqCount: 15,
-      }
-    );
-  }, [classId]);
-
-  const subjectDetail = useMemo(
-    () => getSubjectVideoDetail(classData.subjectId),
-    [classData.subjectId]
-  );
+  const [loading, setLoading] = useState(true);
+  const [classData, setClassData] = useState<RecordedClass | null>(null);
+  const [playlist, setPlaylist] = useState<RecordedClass[]>([]);
 
   // Player state
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentSeconds, setCurrentSeconds] = useState(120); // starts at 2m in for realistic progress
+  const [currentSeconds, setCurrentSeconds] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   const [activeTab, setActiveTab] = useState<DetailTabType>('timestamps');
   const [isBookmarked, setIsBookmarked] = useState(false);
 
-  // Timer simulation when playing
   useEffect(() => {
-    if (!isPlaying) return;
-
-    const interval = setInterval(() => {
-      setCurrentSeconds((prev) => {
-        if (prev >= classData.durationSeconds) {
-          setIsPlaying(false);
-          return classData.durationSeconds;
+    let isMounted = true;
+    const loadClass = async () => {
+      try {
+        setLoading(true);
+        const data = await getClassDetail(classId as string);
+        if (isMounted) {
+          setClassData(data);
+          if (data && data.subjectId) {
+            const subjectObj = await getSubjectClasses(data.subjectId);
+            if (isMounted && subjectObj) {
+              setPlaylist(subjectObj.classes);
+            }
+          }
         }
-        return prev + 1;
-      });
-    }, 1000 / playbackSpeed);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
 
-    return () => clearInterval(interval);
-  }, [isPlaying, playbackSpeed, classData.durationSeconds]);
+    loadClass();
+    return () => {
+      isMounted = false;
+    };
+  }, [classId, getClassDetail, getSubjectClasses]);
+
+  // Playback state is now driven directly by real video player
+  useEffect(() => {
+    if (classData) {
+      savePlaybackProgress(classData.id, currentSeconds, classData.durationSeconds);
+    }
+  }, [currentSeconds, classData?.id, classData?.durationSeconds, savePlaybackProgress]);
+
+  useEffect(() => {
+    if (classData) {
+      savePlaybackProgress(classData.id, currentSeconds, classData.durationSeconds);
+    }
+  }, [currentSeconds, classData?.id, classData?.durationSeconds, savePlaybackProgress]);
 
   const handleTogglePlay = () => {
     setIsPlaying((prev) => !prev);
@@ -112,6 +100,7 @@ export default function ClassDetailScreen() {
   };
 
   const handleBookmarkToggle = () => {
+    if (!classData) return;
     setIsBookmarked((prev) => {
       const next = !prev;
       Alert.alert(
@@ -125,42 +114,74 @@ export default function ClassDetailScreen() {
   };
 
   const handleDownloadNotes = () => {
+    if (!classData) return;
+    const sizeText = classData.notesPdfSize ? ` (${classData.notesPdfSize})` : '';
     Alert.alert(
       'Download Notes',
-      `Downloading High-Yield Lecture Slides & Notes (${classData.notesPdfSize}). Available in offline locker.`,
+      `Downloading High-Yield Lecture Slides & Notes${sizeText}. Available in offline locker.`,
       [{ text: 'OK', style: 'default' }]
     );
   };
 
   const handlePracticeMCQs = () => {
-    Alert.alert(
-      'Launch Drill',
-      `Ready to practice ${classData.associatedMcqCount} clinical questions on ${classData.chapterTitle}?`,
-      [
-        { text: 'Start Practice', style: 'default' },
-        { text: 'Later', style: 'cancel' },
-      ]
-    );
+    if (!classData) return;
+    if (classData.associatedMcqTopicId) {
+      router.push(`/qbank/${classData.subjectId}` as any);
+    } else {
+      Alert.alert(
+        'Practice MCQs',
+        `Launching high-yield drill for ${classData.chapterTitle}.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Launch QBank',
+            onPress: () => router.push(`/qbank/${classData.subjectId}` as any),
+          },
+        ]
+      );
+    }
   };
 
   const handleNextClass = (nextClass: RecordedClass) => {
-    router.push(`/videos/class/${nextClass.id}` as any);
+    router.replace(`/videos/class/${nextClass.id}` as any);
   };
+
+  if (loading) {
+    return (
+      <View style={[styles.safeArea, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center', gap: 12 }]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={{ fontSize: 14, color: Colors.onSurfaceVariant }}>Loading video lecture from database...</Text>
+      </View>
+    );
+  }
+
+  if (!classData) {
+    return (
+      <View style={[styles.safeArea, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center', padding: 24, gap: 12 }]}>
+        <MaterialIcons name="ondemand-video" size={48} color={Colors.primary} />
+        <Text style={{ fontSize: 18, fontWeight: '700', color: Colors.onSurface }}>Lecture Not Found</Text>
+        <Text style={{ fontSize: 14, color: Colors.onSurfaceVariant, textAlign: 'center' }}>
+          This lecture could not be found in the database.
+        </Text>
+        <Pressable onPress={() => router.back()} style={{ marginTop: 12, paddingHorizontal: 20, paddingVertical: 10, backgroundColor: Colors.primary, borderRadius: 9999 }}>
+          <Text style={{ color: '#fff', fontWeight: '600' }}>Go Back</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.safeArea, { paddingTop: insets.top }]}>
-      {/* Top Header */}
+      {/* 64px Standard Header with Back, Title & Bookmark */}
       <ClassDetailHeader
         classNumber={classData.classNumber}
-        totalClasses={subjectDetail.videoCount}
+        totalClasses={playlist.length > 0 ? playlist.length : undefined}
         isBookmarked={isBookmarked}
         onBookmarkPress={handleBookmarkToggle}
         onSharePress={() =>
-          Alert.alert('Share Lecture', `Share "${classData.title}" with study group.`)
+          Alert.alert('Share Class', `Share "${classData.title}" with medical colleagues.`)
         }
-        onDownloadPress={() =>
-          Alert.alert('Offline Video', 'Downloading video for offline viewing in DocLock.')
-        }
+        onDownloadPress={handleDownloadNotes}
       />
 
       <ScrollView
@@ -172,6 +193,7 @@ export default function ClassDetailScreen() {
           {/* Interactive Medical Video Player */}
           <VideoPlayer
             thumbnailUrl={classData.thumbnailUrl}
+            videoUrl={classData.videoUrl}
             durationSeconds={classData.durationSeconds}
             currentSeconds={currentSeconds}
             isPlaying={isPlaying}
@@ -179,6 +201,8 @@ export default function ClassDetailScreen() {
             onSeek={handleSeek}
             playbackSpeed={playbackSpeed}
             onChangeSpeed={setPlaybackSpeed}
+            onTimeUpdate={setCurrentSeconds}
+            onPlayingChange={setIsPlaying}
           />
 
           {/* Class Title & Meta Block */}
@@ -186,7 +210,7 @@ export default function ClassDetailScreen() {
             <View style={styles.metaRow}>
               <View style={styles.chapterPill}>
                 <Text style={styles.chapterPillText}>
-                  {subjectDetail.name} • {classData.chapterTitle}
+                  {(classData.subjectId ? classData.subjectId.charAt(0).toUpperCase() + classData.subjectId.slice(1) : 'Subject')} • {classData.chapterTitle}
                 </Text>
               </View>
 
@@ -414,15 +438,23 @@ export default function ClassDetailScreen() {
           {activeTab === 'playlist' && (
             <View style={styles.tabContentContainer}>
               <View style={styles.playlistContainer}>
-                {subjectDetail.classes
-                  .filter((c) => c.id !== classData.id)
-                  .map((otherClass) => (
-                    <PlaylistItemRow
-                      key={otherClass.id}
-                      item={otherClass}
-                      onPress={() => handleNextClass(otherClass)}
-                    />
-                  ))}
+                {playlist.filter((c) => c.id !== classData.id).length > 0 ? (
+                  playlist
+                    .filter((c) => c.id !== classData.id)
+                    .map((otherClass) => (
+                      <PlaylistItemRow
+                        key={otherClass.id}
+                        item={otherClass}
+                        onPress={() => handleNextClass(otherClass)}
+                      />
+                    ))
+                ) : (
+                  <View style={{ padding: 24, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 13, color: Colors.onSurfaceVariant }}>
+                      No other classes available in this playlist yet.
+                    </Text>
+                  </View>
+                )}
               </View>
             </View>
           )}

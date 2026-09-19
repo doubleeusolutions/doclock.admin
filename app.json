@@ -50,7 +50,16 @@
           ]
         }
       ],
-      "expo-video"
+      "expo-video",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow DocLock to access your camera for live classes",
+          "microphonePermission": "Allow DocLock to access your microphone for live classes",
+          "recordAudioAndroid": true
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

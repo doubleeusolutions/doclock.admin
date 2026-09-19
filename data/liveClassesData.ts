@@ -32,6 +32,7 @@ export interface LiveClassSession {
   accentColor: string;
   keyTopics: string[];
   poll?: LivePoll;
+  stream_url?: string;
 }
 
 export const LIVE_CLASSES_DATA: LiveClassSession[] = [

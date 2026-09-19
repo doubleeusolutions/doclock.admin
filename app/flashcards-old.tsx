@@ -16,24 +16,33 @@ import Animated, {
   withSpring,
   interpolate,
 } from 'react-native-reanimated';
+import { ActivityIndicator } from 'react-native';
 import {
-  ACTIVE_FLASHCARDS,
-  FLASHCARD_DECKS,
   FlashcardItem,
   FlashcardDeck,
 } from '@/data/quickResourcesData';
 import { Colors, Motion } from '@/theme';
+import { useStudyLocker } from '@/hooks/useStudyLocker';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export default function FlashcardsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { flashcards: lockerCards, decks, rateFlashcard, loading } = useStudyLocker();
 
-  const [cards, setCards] = useState<FlashcardItem[]>(ACTIVE_FLASHCARDS);
+  const [cards, setCards] = useState<FlashcardItem[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
-  const [completedToday, setCompletedToday] = useState(14);
+  const [completedToday, setCompletedToday] = useState(0);
+
+  React.useEffect(() => {
+    if (lockerCards && lockerCards.length > 0) {
+      setCards(lockerCards);
+    } else {
+      setCards([]);
+    }
+  }, [lockerCards]);
 
   // Back button animation
   const backBtnScale = useSharedValue(1);
@@ -75,6 +84,10 @@ export default function FlashcardsScreen() {
   const handleRateCard = (quality: 'again' | 'hard' | 'good' | 'easy') => {
     setCompletedToday((prev) => prev + 1);
 
+    if (cards[currentIndex]?.id) {
+      rateFlashcard(cards[currentIndex].id, quality);
+    }
+
     // Reset card to front
     flipProgress.value = withSpring(0, { damping: 15, stiffness: 90 });
     setIsFlipped(false);
@@ -94,6 +107,17 @@ export default function FlashcardsScreen() {
   };
 
   const currentCard = cards[currentIndex];
+
+  if (loading) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={{ marginTop: 12, color: Colors.onSurfaceVariant, fontSize: 13 }}>
+          Loading active recall flashcards...
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -119,7 +143,7 @@ export default function FlashcardsScreen() {
           <View style={styles.headerTitleGroup}>
             <Text style={styles.headerTitle}>Active Recall Flashcards</Text>
             <Text style={styles.headerSubtitle}>
-              580 total • 42 due for review today
+              {cards.length} total • {cards.length} due for review today
             </Text>
           </View>
         </View>
@@ -151,7 +175,7 @@ export default function FlashcardsScreen() {
           <View style={styles.statBox}>
             <Text style={styles.statEmoji}>🔥</Text>
             <View>
-              <Text style={styles.statVal}>14 Days</Text>
+              <Text style={styles.statVal}>Active</Text>
               <Text style={styles.statLabel}>Study Streak</Text>
             </View>
           </View>
@@ -159,7 +183,7 @@ export default function FlashcardsScreen() {
           <View style={styles.statBox}>
             <Text style={styles.statEmoji}>⏱️</Text>
             <View>
-              <Text style={styles.statVal}>42 Due</Text>
+              <Text style={styles.statVal}>{cards.length} Due</Text>
               <Text style={styles.statLabel}>Cards Today</Text>
             </View>
           </View>
@@ -167,139 +191,157 @@ export default function FlashcardsScreen() {
           <View style={styles.statBox}>
             <Text style={styles.statEmoji}>🏆</Text>
             <View>
-              <Text style={styles.statVal}>88%</Text>
+              <Text style={styles.statVal}>{completedToday > 0 ? `${completedToday} Done` : '0%'}</Text>
               <Text style={styles.statLabel}>Mastered</Text>
             </View>
           </View>
         </View>
 
         {/* 3. INTERACTIVE 3D FLIP FLASHCARD */}
-        <View style={styles.flashcardSection}>
-          <View style={styles.cardHeaderRow}>
-            <View style={styles.counterBadge}>
-              <Text style={styles.counterBadgeText}>
-                Card {currentIndex + 1} of {cards.length}
-              </Text>
-            </View>
-            <Text style={styles.tapInstruction}>
-              {isFlipped ? 'Tap card to see Question' : 'Tap card to Reveal Answer'}
+        {!currentCard ? (
+          <View style={styles.emptyCardBox}>
+            <MaterialIcons name="style" size={44} color={Colors.primary} />
+            <Text style={styles.emptyCardTitle}>No Flashcards Available</Text>
+            <Text style={styles.emptyCardSubtitle}>
+              You have no active recall flashcards in your review queue right now.
             </Text>
           </View>
-
-          {/* Flashcard Flip Stage */}
-          <Pressable onPress={handleFlipCard} style={styles.flipStage}>
-            {/* FRONT OF CARD (Question) */}
-            <Animated.View style={[styles.cardFront, frontAnimatedStyle]}>
-              <View style={styles.cardTagRow}>
-                <View style={styles.subjectTag}>
-                  <Text style={styles.subjectTagText}>
-                    {currentCard.subject.toUpperCase()} • {currentCard.chapter.toUpperCase()}
-                  </Text>
-                </View>
-                <View style={styles.categoryBadge}>
-                  <Text style={styles.categoryBadgeText}>
-                    {currentCard.category}
-                  </Text>
-                </View>
+        ) : (
+          <View style={styles.flashcardSection}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.counterBadge}>
+                <Text style={styles.counterBadgeText}>
+                  Card {currentIndex + 1} of {cards.length}
+                </Text>
               </View>
-
-              <View style={styles.questionCenter}>
-                <MaterialIcons name="help-outline" size={28} color="#0059b9" />
-                <Text style={styles.questionText}>{currentCard.question}</Text>
-              </View>
-
-              <View style={styles.flipPromptRow}>
-                <MaterialIcons name="touch-app" size={16} color="#727782" />
-                <Text style={styles.flipPromptText}>Tap to reveal answer</Text>
-              </View>
-            </Animated.View>
-
-            {/* BACK OF CARD (Answer & Pearl) */}
-            <Animated.View style={[styles.cardBack, backAnimatedStyle]}>
-              <View style={styles.cardTagRow}>
-                <View style={[styles.subjectTag, { backgroundColor: '#ecfdf5' }]}>
-                  <Text style={[styles.subjectTagText, { color: '#047857' }]}>
-                    HIGH-YIELD ANSWER
-                  </Text>
-                </View>
-                <MaterialIcons name="verified" size={18} color="#10b981" />
-              </View>
-
-              <View style={styles.answerCenter}>
-                <Text style={styles.answerText}>{currentCard.answer}</Text>
-                <View style={styles.pearlBox}>
-                  <MaterialIcons name="lightbulb" size={16} color="#d97706" />
-                  <Text style={styles.pearlText}>
-                    {currentCard.highYieldPearl}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.flipPromptRow}>
-                <MaterialIcons name="touch-app" size={16} color="#727782" />
-                <Text style={styles.flipPromptText}>Tap to flip back</Text>
-              </View>
-            </Animated.View>
-          </Pressable>
-
-          {/* 4. SPACED REPETITION RATING BUTTONS */}
-          {isFlipped && (
-            <View style={styles.ratingSection}>
-              <Text style={styles.ratingTitle}>How well did you recall this?</Text>
-              <View style={styles.ratingButtonsRow}>
-                <Pressable
-                  onPress={() => handleRateCard('again')}
-                  style={[styles.rateBtn, styles.rateBtnAgain]}
-                >
-                  <Text style={styles.rateBtnTitle}>Again</Text>
-                  <Text style={styles.rateBtnTime}>{'<1m'}</Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={() => handleRateCard('hard')}
-                  style={[styles.rateBtn, styles.rateBtnHard]}
-                >
-                  <Text style={styles.rateBtnTitle}>Hard</Text>
-                  <Text style={styles.rateBtnTime}>12h</Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={() => handleRateCard('good')}
-                  style={[styles.rateBtn, styles.rateBtnGood]}
-                >
-                  <Text style={styles.rateBtnTitle}>Good</Text>
-                  <Text style={styles.rateBtnTime}>1d</Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={() => handleRateCard('easy')}
-                  style={[styles.rateBtn, styles.rateBtnEasy]}
-                >
-                  <Text style={styles.rateBtnTitle}>Easy</Text>
-                  <Text style={styles.rateBtnTime}>4d</Text>
-                </Pressable>
-              </View>
+              <Text style={styles.tapInstruction}>
+                {isFlipped ? 'Tap card to see Question' : 'Tap card to Reveal Answer'}
+              </Text>
             </View>
-          )}
-        </View>
+
+            {/* Flashcard Flip Stage */}
+            <Pressable onPress={handleFlipCard} style={styles.flipStage}>
+              {/* FRONT OF CARD (Question) */}
+              <Animated.View style={[styles.cardFront, frontAnimatedStyle]}>
+                <View style={styles.cardTagRow}>
+                  <View style={styles.subjectTag}>
+                    <Text style={styles.subjectTagText}>
+                      {currentCard.subject.toUpperCase()} • {currentCard.chapter.toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.categoryBadge}>
+                    <Text style={styles.categoryBadgeText}>
+                      {currentCard.category}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.questionCenter}>
+                  <MaterialIcons name="help-outline" size={28} color="#0059b9" />
+                  <Text style={styles.questionText}>{currentCard.question}</Text>
+                </View>
+
+                <View style={styles.flipPromptRow}>
+                  <MaterialIcons name="touch-app" size={16} color="#727782" />
+                  <Text style={styles.flipPromptText}>Tap to reveal answer</Text>
+                </View>
+              </Animated.View>
+
+              {/* BACK OF CARD (Answer & Pearl) */}
+              <Animated.View style={[styles.cardBack, backAnimatedStyle]}>
+                <View style={styles.cardTagRow}>
+                  <View style={[styles.subjectTag, { backgroundColor: '#ecfdf5' }]}>
+                    <Text style={[styles.subjectTagText, { color: '#047857' }]}>
+                      HIGH-YIELD ANSWER
+                    </Text>
+                  </View>
+                  <MaterialIcons name="verified" size={18} color="#10b981" />
+                </View>
+
+                <View style={styles.answerCenter}>
+                  <Text style={styles.answerText}>{currentCard.answer}</Text>
+                  {currentCard.highYieldPearl ? (
+                    <View style={styles.pearlBox}>
+                      <MaterialIcons name="lightbulb" size={16} color="#d97706" />
+                      <Text style={styles.pearlText}>
+                        {currentCard.highYieldPearl}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                <View style={styles.flipPromptRow}>
+                  <MaterialIcons name="touch-app" size={16} color="#727782" />
+                  <Text style={styles.flipPromptText}>Tap to flip back</Text>
+                </View>
+              </Animated.View>
+            </Pressable>
+
+            {/* 4. SPACED REPETITION RATING BUTTONS */}
+            {isFlipped && (
+              <View style={styles.ratingSection}>
+                <Text style={styles.ratingTitle}>How well did you recall this?</Text>
+                <View style={styles.ratingButtonsRow}>
+                  <Pressable
+                    onPress={() => handleRateCard('again')}
+                    style={[styles.rateBtn, styles.rateBtnAgain]}
+                  >
+                    <Text style={styles.rateBtnTitle}>Again</Text>
+                    <Text style={styles.rateBtnTime}>{'<1m'}</Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => handleRateCard('hard')}
+                    style={[styles.rateBtn, styles.rateBtnHard]}
+                  >
+                    <Text style={styles.rateBtnTitle}>Hard</Text>
+                    <Text style={styles.rateBtnTime}>12h</Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => handleRateCard('good')}
+                    style={[styles.rateBtn, styles.rateBtnGood]}
+                  >
+                    <Text style={styles.rateBtnTitle}>Good</Text>
+                    <Text style={styles.rateBtnTime}>1d</Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => handleRateCard('easy')}
+                    style={[styles.rateBtn, styles.rateBtnEasy]}
+                  >
+                    <Text style={styles.rateBtnTitle}>Easy</Text>
+                    <Text style={styles.rateBtnTime}>4d</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
 
         {/* 5. SUBJECT FLASHCARD DECKS */}
         <View style={styles.decksSection}>
           <Text style={styles.decksHeader}>Subject Flashcard Decks</Text>
-          <View style={styles.decksGrid}>
-            {FLASHCARD_DECKS.map((deck) => (
-              <FlashcardDeckCard
-                key={deck.id}
-                deck={deck}
-                onPractice={() => {
-                  Alert.alert(
-                    `${deck.subject} Deck`,
-                    `Starting active recall session for ${deck.dueToday} due cards.`
-                  );
-                }}
-              />
-            ))}
-          </View>
+          {decks.length === 0 ? (
+            <View style={styles.emptyDecksBox}>
+              <Text style={styles.emptyDecksText}>No flashcard decks found.</Text>
+            </View>
+          ) : (
+            <View style={styles.decksGrid}>
+              {decks.map((deck) => (
+                <FlashcardDeckCard
+                  key={deck.id}
+                  deck={deck}
+                  onPractice={() => {
+                    Alert.alert(
+                      `${deck.subject} Deck`,
+                      `Starting active recall session for ${deck.dueToday} due cards.`
+                    );
+                  }}
+                />
+              ))}
+            </View>
+          )}
         </View>
 
         <View style={{ height: 40 }} />
@@ -735,5 +777,38 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     fontWeight: '700',
     color: '#0059b9',
+  },
+  emptyCardBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#e2e7f2',
+    gap: 12,
+  },
+  emptyCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.onSurface,
+  },
+  emptyCardSubtitle: {
+    fontSize: 13,
+    color: Colors.onSurfaceVariant,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  emptyDecksBox: {
+    padding: 24,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e2e7f2',
+    alignItems: 'center',
+  },
+  emptyDecksText: {
+    fontSize: 13,
+    color: Colors.onSurfaceVariant,
   },
 });

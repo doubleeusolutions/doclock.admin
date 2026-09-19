@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
-  Alert,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,14 +12,12 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '@/theme';
 import {
-  getSubjectDetail,
   CHAPTER_FILTER_TABS,
   ChapterFilterId,
   SubheadingTopic,
   SubjectDetail,
 } from '@/data/chaptersData';
 import {
-  getQuestionsForTopic,
   AttemptMode,
   MCQQuestion,
   SessionResult,
@@ -29,20 +26,25 @@ import { SubjectDetailHeader } from '@/components/qbank/SubjectDetailHeader';
 import { ChapterSection } from '@/components/qbank/ChapterSection';
 import { ModeSelectionModal } from '@/components/mcq/ModeSelectionModal';
 import { McqAttemptModal } from '@/components/mcq/McqAttemptModal';
+import { useQbank } from '@/hooks/useQbank';
+import { useAlert } from '@/contexts/AlertContext';
+import { useEffect } from 'react';
+import { ActivityIndicator } from 'react-native';
 
 export default function SubjectDetailScreen() {
   const insets = useSafeAreaInsets();
+  const { showAlert } = useAlert();
   const { id } = useLocalSearchParams<{ id: string }>();
   const subjectId = (id as string) || 'anatomy';
+  const { getSubjectDetail, getQuestions, submitQuizAttempt } = useQbank();
 
+  const [loading, setLoading] = useState(true);
   const [selectedFilter, setSelectedFilter] =
     useState<ChapterFilterId>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Subject state allows live progress updates when drills are completed
-  const [subjectDetail, setSubjectDetail] = useState<SubjectDetail>(() =>
-    getSubjectDetail(subjectId)
-  );
+  // Subject state loaded dynamically from Supabase
+  const [subjectDetail, setSubjectDetail] = useState<SubjectDetail | null>(null);
 
   // Modal states for attempting models
   const [activeTopicForMode, setActiveTopicForMode] =
@@ -57,8 +59,28 @@ export default function SubjectDetailScreen() {
     Record<string, boolean>
   >({});
 
+  useEffect(() => {
+    let isMounted = true;
+    const loadDetail = async () => {
+      try {
+        setLoading(true);
+        const data = await getSubjectDetail(subjectId);
+        if (isMounted) {
+          setSubjectDetail(data);
+        }
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+    loadDetail();
+    return () => {
+      isMounted = false;
+    };
+  }, [subjectId, getSubjectDetail]);
+
   // Filter chapters and their subheadings according to selected filter tab and search query
   const filteredChapters = useMemo(() => {
+    if (!subjectDetail) return [];
     const q = searchQuery.trim().toLowerCase();
 
     return subjectDetail.chapters
@@ -95,12 +117,14 @@ export default function SubjectDetailScreen() {
       .filter((chapter) => chapter.topics.length > 0);
   }, [subjectDetail, selectedFilter, searchQuery]);
 
-  const completionPercent = Math.min(
-    100,
-    Math.round(
-      (subjectDetail.completedMcqs / (subjectDetail.totalMcqs || 1)) * 100
-    )
-  );
+  const completionPercent = subjectDetail
+    ? Math.min(
+        100,
+        Math.round(
+          (subjectDetail.completedMcqs / (subjectDetail.totalMcqs || 1)) * 100
+        )
+      )
+    : 0;
 
   // Check if all visible chapters are currently collapsed
   const areAllCollapsed = useMemo(() => {
@@ -133,13 +157,24 @@ export default function SubjectDetailScreen() {
   };
 
   // Starting attempt with chosen mode
-  const handleStartAttempt = (topic: SubheadingTopic, chosenMode: AttemptMode) => {
-    const qList = getQuestionsForTopic(
+  const handleStartAttempt = async (topic: SubheadingTopic, chosenMode: AttemptMode) => {
+    const qList = await getQuestions(
       topic.id,
       topic.title,
-      subjectDetail.subjectName,
+      subjectDetail?.subjectName || '',
       Math.min(10, Math.max(5, topic.mcqCount))
     );
+    if (!qList || qList.length === 0) {
+      showAlert({
+        title: 'No Questions Found',
+        message:
+          'There are no questions in the database for this topic yet. Run seed.sql in the Supabase SQL Editor to populate questions.',
+        type: 'info',
+        icon: 'help-outline',
+        confirmText: 'Understood',
+      });
+      return;
+    }
     setAttemptQuestions(qList);
     setAttemptMode(chosenMode);
     setActiveTopicForAttempt(topic);
@@ -147,7 +182,9 @@ export default function SubjectDetailScreen() {
 
   // Session completed updates the topic's status and solved count
   const handleSessionComplete = (result: SessionResult) => {
+    submitQuizAttempt(result);
     setSubjectDetail((prev) => {
+      if (!prev) return prev;
       const updatedChapters = prev.chapters.map((ch) => ({
         ...ch,
         topics: ch.topics.map((t) => {
@@ -155,7 +192,7 @@ export default function SubjectDetailScreen() {
             return {
               ...t,
               status: 'completed' as const,
-              completedMcqs: Math.max(t.completedMcqs, result.answeredCount),
+              completedMcqs: Math.min(t.mcqCount, (t.completedMcqs || 0) + result.answeredCount),
             };
           }
           return t;
@@ -164,14 +201,32 @@ export default function SubjectDetailScreen() {
 
       return {
         ...prev,
-        completedMcqs: Math.min(
-          prev.totalMcqs,
-          prev.completedMcqs + result.answeredCount
-        ),
+        completedMcqs: prev.completedMcqs + result.answeredCount,
         chapters: updatedChapters,
       };
     });
   };
+
+  if (loading) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center', gap: 12 }]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={{ fontSize: 14, color: Colors.onSurfaceVariant }}>Loading subject curriculum from database...</Text>
+      </View>
+    );
+  }
+
+  if (!subjectDetail) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center', padding: 24, gap: 12 }]}>
+        <MaterialIcons name="menu-book" size={48} color={Colors.primary} />
+        <Text style={{ fontSize: 18, fontWeight: '700', color: Colors.onSurface }}>Subject Not Found</Text>
+        <Text style={{ fontSize: 14, color: Colors.onSurfaceVariant, textAlign: 'center' }}>
+          This subject has no recorded chapters in the database yet.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -181,7 +236,13 @@ export default function SubjectDetailScreen() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onBookmarkPress={() =>
-          Alert.alert('Bookmarks', `Saved topics in ${subjectDetail.subjectName}`)
+          showAlert({
+            title: 'Subject Bookmarks',
+            message: `Opening saved high-yield topics and pearls for ${subjectDetail.subjectName}.`,
+            type: 'info',
+            icon: 'bookmark',
+            confirmText: 'Done',
+          })
         }
       />
 

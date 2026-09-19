@@ -16,11 +16,9 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
-import {
-  getLiveClassById,
-  LIVE_CLASSES_DATA,
-  LiveClassSession,
-} from '@/data/liveClassesData';
+import { ActivityIndicator } from 'react-native';
+import { useLiveClass } from '@/hooks/useLiveClass';
+import { LiveClassSession } from '@/data/liveClassesData';
 import {
   LiveStreamStage,
   StageLayoutMode,
@@ -40,14 +38,23 @@ export default function LiveClassroomScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
 
-  const session: LiveClassSession = useMemo(() => {
-    const found = getLiveClassById((id as string) || 'live-01');
-    return found || LIVE_CLASSES_DATA[0];
-  }, [id]);
+  const {
+    session,
+    loading,
+    messages,
+    sendMessage,
+    isHandRaised,
+    queuePosition,
+    toggleHandRaise,
+    castPollVote,
+    activePoll,
+    incomingReaction,
+    sendReaction,
+    activeSlideUrl,
+  } = useLiveClass((id as string) || '');
 
   const [activeTab, setActiveTab] = useState<LiveTabType>('chat');
   const [layoutMode, setLayoutMode] = useState<StageLayoutMode>('presentation');
-  const [isHandRaised, setIsHandRaised] = useState(false);
   const [reactions, setReactions] = useState<FloatingReaction[]>([]);
 
   // Back button animation
@@ -56,7 +63,18 @@ export default function LiveClassroomScreen() {
     transform: [{ scale: backBtnScale.value }],
   }));
 
+  // Handle incoming real-time reactions
+  React.useEffect(() => {
+    if (incomingReaction) {
+      setReactions((prev) => [...prev.slice(-8), { ...incomingReaction, xOffset: Math.floor(Math.random() * 50) }]);
+      setTimeout(() => {
+        setReactions((prev) => prev.filter((r) => r.id !== incomingReaction.id));
+      }, 2500);
+    }
+  }, [incomingReaction]);
+
   const handleTriggerReaction = (emoji: string) => {
+    // Optimistically show it locally
     const newReaction: FloatingReaction = {
       id: `rx-${Date.now()}-${Math.random()}`,
       emoji,
@@ -65,24 +83,50 @@ export default function LiveClassroomScreen() {
 
     setReactions((prev) => [...prev.slice(-8), newReaction]);
 
-    // Clear after 2.5 seconds
     setTimeout(() => {
       setReactions((prev) => prev.filter((r) => r.id !== newReaction.id));
     }, 2500);
+
+    // Broadcast to other users
+    sendReaction(emoji);
   };
 
   const handleToggleHandRaise = () => {
-    setIsHandRaised((prev) => {
-      const next = !prev;
-      Alert.alert(
-        next ? 'Hand Raised ✋' : 'Hand Lowered',
-        next
-          ? 'You are now Position #2 in the direct audio queue. The faculty or moderator will unmute your microphone shortly.'
-          : 'You have left the audio question queue.'
-      );
-      return next;
-    });
+    toggleHandRaise();
+    Alert.alert(
+      !isHandRaised ? 'Hand Raised ✋' : 'Hand Lowered',
+      !isHandRaised
+        ? `You are now Position #${queuePosition || 1} in the direct audio queue. The faculty or moderator will unmute your microphone shortly.`
+        : 'You have left the audio question queue.'
+    );
   };
+
+  if (loading) {
+    return (
+      <View style={[styles.loadingScreen, { paddingTop: insets.top }]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={styles.loadingText}>Connecting to live classroom...</Text>
+      </View>
+    );
+  }
+
+  if (!session) {
+    return (
+      <View style={[styles.loadingScreen, { paddingTop: insets.top }]}>
+        <MaterialIcons name="videocam-off" size={48} color={Colors.onSurfaceVariant} />
+        <Text style={styles.notFoundTitle}>Live Session Not Found</Text>
+        <Text style={styles.notFoundSub}>
+          This live lecture has concluded or is no longer broadcasting.
+        </Text>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.backHomeBtn}
+        >
+          <Text style={styles.backHomeBtnText}>Go Back</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -136,7 +180,7 @@ export default function LiveClassroomScreen() {
                 isHandRaised && styles.handRaiseTextActive,
               ]}
             >
-              {isHandRaised ? 'Queue #2' : 'Raise Hand'}
+              {isHandRaised ? `Queue #${queuePosition || 1}` : 'Raise Hand'}
             </Text>
           </Pressable>
         </View>
@@ -149,6 +193,7 @@ export default function LiveClassroomScreen() {
         onChangeLayout={setLayoutMode}
         reactions={reactions}
         onTriggerReaction={handleTriggerReaction}
+        activeSlideUrl={activeSlideUrl}
       />
 
       {/* 3. WORKSPACE TABS STRIP */}
@@ -167,7 +212,7 @@ export default function LiveClassroomScreen() {
           <TabNavPill
             label="Live Polls"
             icon="poll"
-            badge="1 Active"
+            badge={activePoll ? '1 Active' : undefined}
             isActive={activeTab === 'polls'}
             onPress={() => setActiveTab('polls')}
           />
@@ -189,10 +234,17 @@ export default function LiveClassroomScreen() {
       {/* 4. ACTIVE TAB WORKSPACE */}
       <View style={styles.tabContentContainer}>
         {activeTab === 'chat' && (
-          <LiveChatTab onSendReaction={handleTriggerReaction} />
+          <LiveChatTab
+            messages={messages}
+            onSendMessage={sendMessage}
+            onSendReaction={handleTriggerReaction}
+          />
         )}
         {activeTab === 'polls' && (
-          <LivePollTab initialPoll={session.poll} />
+          <LivePollTab
+            initialPoll={activePoll}
+            onVote={(optId) => activePoll && castPollVote(activePoll.question, optId)}
+          />
         )}
         {activeTab === 'slides' && (
           <LiveSlidesTab session={session} />
@@ -659,5 +711,41 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: '700',
     color: '#0059b9',
+  },
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingHorizontal: 24,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: Colors.onSurfaceVariant,
+    fontWeight: '500',
+  },
+  notFoundTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.onSurface,
+  },
+  notFoundSub: {
+    fontSize: 13,
+    color: Colors.onSurfaceVariant,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  backHomeBtn: {
+    marginTop: 8,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 9999,
+  },
+  backHomeBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import Animated, {
   useSharedValue,
@@ -8,21 +8,24 @@ import Animated, {
   FadeIn,
 } from 'react-native-reanimated';
 import { Colors, Motion } from '@/theme';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface OptionItem {
   id: string;
   label: 'A' | 'B' | 'C' | 'D';
   text: string;
+  isCorrect: boolean;
 }
 
-const DEFAULT_OPTIONS: OptionItem[] = [
-  { id: 'A', label: 'A', text: 'CK-MB' },
-  { id: 'B', label: 'B', text: 'Troponin I' },
-  { id: 'C', label: 'C', text: 'Myoglobin' },
-  { id: 'D', label: 'D', text: 'LDH' },
-];
-
-const CORRECT_OPTION_ID = 'B';
+interface QuestionData {
+  id: string;
+  questionNumber: number;
+  clinicalVignette: string;
+  explanation: string;
+  goldenPearl?: string;
+  options: OptionItem[];
+}
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -113,7 +116,10 @@ const OptionRow: React.FC<{
 };
 
 export const MCQCard: React.FC = () => {
-  const [selectedOption, setSelectedOption] = useState<string | null>('D'); // Starts with D selected matching initial screenshot/html
+  const { user } = useAuth();
+  const [question, setQuestion] = useState<QuestionData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const btnScale = useSharedValue(1);
 
@@ -121,98 +127,199 @@ export const MCQCard: React.FC = () => {
     transform: [{ scale: btnScale.value }],
   }));
 
-  const handleAnswer = () => {
-    if (!selectedOption) return;
+  useEffect(() => {
+    let isMounted = true;
+    const fetchDailyQuestion = async () => {
+      try {
+        setLoading(true);
+        const { data, error } = await supabase
+          .from('mcq_questions')
+          .select('*, options:mcq_options(*)')
+          .order('question_number', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+
+        if (error) {
+          throw error;
+        }
+
+        if (isMounted && data) {
+          const rawOptions = data.options || [];
+          const sortedOptions = rawOptions
+            .sort((a: any, b: any) => (a.option_label || '').localeCompare(b.option_label || ''))
+            .map((o: any) => ({
+              id: o.option_label,
+              label: o.option_label as 'A' | 'B' | 'C' | 'D',
+              text: o.option_text,
+              isCorrect: !!o.is_correct,
+            }));
+
+          setQuestion({
+            id: data.id,
+            questionNumber: data.question_number || 1,
+            clinicalVignette: data.clinical_vignette,
+            explanation: data.explanation,
+            goldenPearl: data.golden_pearl,
+            options: sortedOptions,
+          });
+        } else if (isMounted) {
+          setQuestion(null);
+        }
+      } catch (err: any) {
+        console.warn('[MCQCard] fetchDailyQuestion error:', err.message);
+        if (isMounted) setQuestion(null);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    fetchDailyQuestion();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleAnswer = async () => {
+    if (!selectedOption || !question) return;
     if (isSubmitted) {
       // Reset
       setIsSubmitted(false);
       setSelectedOption(null);
     } else {
       setIsSubmitted(true);
+      // If user is authenticated, record quiz attempt
+      if (user) {
+        try {
+          const chosenOpt = question.options.find((o) => o.id === selectedOption);
+          await supabase.from('quiz_attempts').insert({
+            user_id: user.id,
+            mode: 'practice',
+            total_questions: 1,
+            answered_count: 1,
+            correct_count: chosenOpt?.isCorrect ? 1 : 0,
+            incorrect_count: chosenOpt?.isCorrect ? 0 : 1,
+            skipped_count: 0,
+            accuracy_percentage: chosenOpt?.isCorrect ? 100 : 0,
+            score: chosenOpt?.isCorrect ? 1 : 0,
+            total_time_seconds: 15,
+            status: 'completed',
+          });
+        } catch (e) {
+          console.error('[MCQCard] Error recording answer:', e);
+        }
+      }
     }
   };
 
-  const isUserCorrect = selectedOption === CORRECT_OPTION_ID;
+  const correctOption = question?.options.find((o) => o.isCorrect);
+  const isUserCorrect = selectedOption === correctOption?.id;
 
   return (
     <View style={styles.container}>
       {/* Header with Title and Question Counter */}
       <View style={styles.headerRow}>
         <Text style={styles.sectionTitle}>Quick practice</Text>
-        <View style={styles.counterBadge}>
-          <Text style={styles.counterText}>Question 4 of 10</Text>
-        </View>
+        {question && (
+          <View style={styles.counterBadge}>
+            <Text style={styles.counterText}>Daily Question #{question.questionNumber}</Text>
+          </View>
+        )}
       </View>
 
       {/* Main MCQ Card Container */}
       <View style={styles.card}>
-        {/* Scenario Text */}
-        <Text style={styles.questionText}>
-          A patient presents with severe chest pain radiating to the left arm. Which biomarker is most specific for myocardial injury?
-        </Text>
+        {loading ? (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator size="small" color={Colors.primary} />
+            <Text style={styles.loadingText}>Loading question from database...</Text>
+          </View>
+        ) : !question ? (
+          <View style={styles.emptyBox}>
+            <MaterialIcons name="quiz" size={32} color={Colors.primary} />
+            <Text style={styles.emptyTitle}>No questions found in database</Text>
+            <Text style={styles.emptySubtitle}>
+              Run seed.sql in your Supabase SQL Editor to populate high-yield clinical MCQs.
+            </Text>
+          </View>
+        ) : (
+          <>
+            {/* Scenario Text */}
+            <Text style={styles.questionText}>{question.clinicalVignette}</Text>
 
-        {/* Options List */}
-        <View style={styles.optionsList}>
-          {DEFAULT_OPTIONS.map((opt) => (
-            <OptionRow
-              key={opt.id}
-              option={opt}
-              isSelected={selectedOption === opt.id}
-              isSubmitted={isSubmitted}
-              isCorrect={opt.id === CORRECT_OPTION_ID}
-              onSelect={() => setSelectedOption(opt.id)}
-            />
-          ))}
-        </View>
-
-        {/* Clinical Explanation feedback upon submission */}
-        {isSubmitted && (
-          <Animated.View entering={FadeIn.duration(250)} style={styles.explanationBox}>
-            <View style={styles.explanationHeader}>
-              <MaterialIcons
-                name={isUserCorrect ? 'check-circle' : 'info'}
-                size={18}
-                color={isUserCorrect ? '#10b981' : Colors.primary}
-              />
-              <Text
-                style={[
-                  styles.explanationTitle,
-                  { color: isUserCorrect ? '#065f46' : Colors.primary },
-                ]}
-              >
-                {isUserCorrect ? 'Correct Analysis' : 'High-Yield Clinical Review'}
-              </Text>
+            {/* Options List */}
+            <View style={styles.optionsList}>
+              {question.options.map((opt) => (
+                <OptionRow
+                  key={opt.id}
+                  option={opt}
+                  isSelected={selectedOption === opt.id}
+                  isSubmitted={isSubmitted}
+                  isCorrect={opt.isCorrect}
+                  onSelect={() => setSelectedOption(opt.id)}
+                />
+              ))}
             </View>
-            <Text style={styles.explanationText}>
-              Cardiac troponins (Troponin I and T) are regulatory proteins of myocardial contraction. Because they possess cardiac-specific isoforms not expressed in skeletal muscle, Troponin I is the gold standard biomarker for diagnosing acute myocardial infarction (highest sensitivity and specificity).
-            </Text>
-          </Animated.View>
-        )}
 
-        {/* Answer Button */}
-        <View style={styles.actionRow}>
-          <AnimatedPressable
-            onPress={handleAnswer}
-            onPressIn={() => {
-              btnScale.value = withSpring(0.95, Motion.tactileSpring);
-            }}
-            onPressOut={() => {
-              btnScale.value = withSpring(1, Motion.tactileSpring);
-            }}
-            style={[styles.answerButton, btnAnimStyle]}
-            accessibilityRole="button"
-            accessibilityLabel="Submit answer"
-          >
-            <Text style={styles.answerButtonText}>
-              {isSubmitted ? 'Try Again' : 'Answer'}
-            </Text>
-            <MaterialIcons
-              name={isSubmitted ? 'refresh' : 'arrow-forward'}
-              size={18}
-              color="#ffffff"
-            />
-          </AnimatedPressable>
-        </View>
+            {/* Clinical Explanation feedback upon submission */}
+            {isSubmitted && (
+              <Animated.View entering={FadeIn.duration(250)} style={styles.explanationBox}>
+                <View style={styles.explanationHeader}>
+                  <MaterialIcons
+                    name={isUserCorrect ? 'check-circle' : 'info'}
+                    size={18}
+                    color={isUserCorrect ? '#10b981' : Colors.primary}
+                  />
+                  <Text
+                    style={[
+                      styles.explanationTitle,
+                      { color: isUserCorrect ? '#065f46' : Colors.primary },
+                    ]}
+                  >
+                    {isUserCorrect ? 'Correct Analysis' : 'High-Yield Clinical Review'}
+                  </Text>
+                </View>
+                <Text style={styles.explanationText}>{question.explanation}</Text>
+                {question.goldenPearl && (
+                  <View style={styles.pearlBox}>
+                    <Text style={styles.pearlTitle}>Golden Pearl:</Text>
+                    <Text style={styles.pearlText}>{question.goldenPearl}</Text>
+                  </View>
+                )}
+              </Animated.View>
+            )}
+
+            {/* Answer Button */}
+            <View style={styles.actionRow}>
+              <AnimatedPressable
+                onPress={handleAnswer}
+                disabled={!selectedOption}
+                onPressIn={() => {
+                  btnScale.value = withSpring(0.95, Motion.tactileSpring);
+                }}
+                onPressOut={() => {
+                  btnScale.value = withSpring(1, Motion.tactileSpring);
+                }}
+                style={[
+                  styles.answerButton,
+                  !selectedOption && styles.answerButtonDisabled,
+                  btnAnimStyle,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Submit answer"
+              >
+                <Text style={styles.answerButtonText}>
+                  {isSubmitted ? 'Try Again' : 'Answer'}
+                </Text>
+                <MaterialIcons
+                  name={isSubmitted ? 'refresh' : 'arrow-forward'}
+                  size={18}
+                  color="#ffffff"
+                />
+              </AnimatedPressable>
+            </View>
+          </>
+        )}
       </View>
     </View>
   );
@@ -257,6 +364,34 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
     gap: 16,
+  },
+  loadingBox: {
+    paddingVertical: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: Colors.onSurfaceVariant,
+  },
+  emptyBox: {
+    paddingVertical: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.onSurface,
+  },
+  emptySubtitle: {
+    fontSize: 13,
+    color: Colors.onSurfaceVariant,
+    textAlign: 'center',
+    maxWidth: 280,
+    lineHeight: 18,
   },
   questionText: {
     fontSize: 16,
@@ -327,6 +462,24 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     color: Colors.onSurfaceVariant,
   },
+  pearlBox: {
+    marginTop: 6,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(194, 198, 213, 0.4)',
+    gap: 2,
+  },
+  pearlTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  pearlText: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    color: Colors.onSurface,
+    lineHeight: 17,
+  },
   actionRow: {
     paddingTop: 4,
     alignItems: 'flex-end',
@@ -344,6 +497,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 5,
     elevation: 3,
+  },
+  answerButtonDisabled: {
+    opacity: 0.5,
   },
   answerButtonText: {
     color: '#ffffff',

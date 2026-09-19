@@ -11,10 +11,14 @@ import { DesktopSyncBanner } from '@/components/home/DesktopSyncBanner';
 import { LiveClassSession } from '@/data/liveClassesData';
 import { CarouselActivityItem } from '@/data/homeCarouselData';
 import { Colors } from '@/theme';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { profile } = useAuth();
+  const candidateName = profile?.full_name?.split(' ')[0] || 'Alex';
+
   const [activeLiveSession, setActiveLiveSession] =
     useState<LiveClassSession | null>(null);
 
@@ -30,7 +34,7 @@ export default function HomeScreen() {
     <View style={[styles.safeArea, { paddingTop: insets.top }]}>
       {/* Top App Header (64px height, matching Qbank & Videos) */}
       <HomeTopHeader
-        userName="Alex"
+        userName={candidateName}
         subtitle="Ready for today's revision?"
       />
 

@@ -11,24 +11,26 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { QbankHeader } from '@/components/qbank/QbankHeader';
 import { SubjectCard } from '@/components/qbank/SubjectCard';
 import {
-  QBANK_SUBJECTS,
   FILTER_CHIPS,
   SubjectCategory,
   QbankSubject,
 } from '@/data/qbankData';
 import { Colors } from '@/theme';
+import { useQbank } from '@/hooks/useQbank';
+import { ActivityIndicator } from 'react-native';
 
 export default function QbankScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { subjects, loading } = useQbank();
   const [selectedFilter, setSelectedFilter] = useState<'all' | SubjectCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Filter subjects based on category chip and search query
   const filteredSubjects = useMemo(() => {
-    return QBANK_SUBJECTS.filter((subject: QbankSubject) => {
+    return subjects.filter((subject: any) => {
       const matchesCategory =
-        selectedFilter === 'all' || subject.categories.includes(selectedFilter);
+        selectedFilter === 'all' || (subject.categories || []).includes(selectedFilter);
 
       const matchesSearch =
         searchQuery.trim() === '' ||
@@ -36,7 +38,7 @@ export default function QbankScreen() {
 
       return matchesCategory && matchesSearch;
     });
-  }, [selectedFilter, searchQuery]);
+  }, [subjects, selectedFilter, searchQuery]);
 
   return (
     <View style={[styles.safeArea, { paddingTop: insets.top }]}>
@@ -94,7 +96,12 @@ export default function QbankScreen() {
 
           {/* Subjects List */}
           <View style={styles.subjectsList}>
-            {filteredSubjects.length > 0 ? (
+            {loading ? (
+              <View style={{ paddingVertical: 40, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <ActivityIndicator size="large" color={Colors.primary} />
+                <Text style={{ fontSize: 13, color: Colors.onSurfaceVariant }}>Loading subjects from database...</Text>
+              </View>
+            ) : filteredSubjects.length > 0 ? (
               filteredSubjects.map((subject) => (
                 <SubjectCard
                   key={subject.id}
@@ -106,9 +113,9 @@ export default function QbankScreen() {
               ))
             ) : (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateTitle}>No subjects found</Text>
+                <Text style={styles.emptyStateTitle}>No subjects found in database</Text>
                 <Text style={styles.emptyStateSubtitle}>
-                  Try clearing your search or choosing another category filter.
+                  Run seed.sql in Supabase SQL Editor to populate curriculum subjects.
                 </Text>
               </View>
             )}

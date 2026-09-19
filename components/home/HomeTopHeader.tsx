@@ -78,6 +78,14 @@ export const HomeTopHeader: React.FC<HomeTopHeaderProps> = ({
   const searchBtnScale = useSharedValue(1);
   const notifBtnScale = useSharedValue(1);
 
+  const searchBtnAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: searchBtnScale.value }],
+  }));
+
+  const notifBtnAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: notifBtnScale.value }],
+  }));
+
   useEffect(() => {
     if (isSearchExpanded) {
       setTimeout(() => {
@@ -203,12 +211,7 @@ export const HomeTopHeader: React.FC<HomeTopHeaderProps> = ({
                 onPressOut={() => {
                   searchBtnScale.value = withSpring(1, Motion.tactileSpring);
                 }}
-                style={[
-                  styles.iconButton,
-                  useAnimatedStyle(() => ({
-                    transform: [{ scale: searchBtnScale.value }],
-                  })),
-                ]}
+                style={[styles.iconButton, searchBtnAnimStyle]}
                 accessibilityRole="button"
                 accessibilityLabel="Search"
               >
@@ -223,12 +226,7 @@ export const HomeTopHeader: React.FC<HomeTopHeaderProps> = ({
                 onPressOut={() => {
                   notifBtnScale.value = withSpring(1, Motion.tactileSpring);
                 }}
-                style={[
-                  styles.iconButton,
-                  useAnimatedStyle(() => ({
-                    transform: [{ scale: notifBtnScale.value }],
-                  })),
-                ]}
+                style={[styles.iconButton, notifBtnAnimStyle]}
                 accessibilityRole="button"
                 accessibilityLabel="Notifications"
               >

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   Pressable,
   Image,
   Alert,
+  ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -14,10 +16,14 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { WebView } from 'react-native-webview';
 import { Colors, Motion } from '@/theme';
+import { getYouTubeId, isYouTubeUrl, resolveVideoThumbnail } from '@/utils/videoUtils';
 
 interface VideoPlayerProps {
   thumbnailUrl: string;
+  videoUrl?: string;
   durationSeconds: number;
   currentSeconds: number;
   isPlaying: boolean;
@@ -25,6 +31,8 @@ interface VideoPlayerProps {
   onSeek: (seconds: number) => void;
   playbackSpeed: number;
   onChangeSpeed: (speed: number) => void;
+  onTimeUpdate?: (seconds: number) => void;
+  onPlayingChange?: (isPlaying: boolean) => void;
 }
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -33,6 +41,7 @@ const SPEED_OPTIONS = [1.0, 1.25, 1.5, 2.0];
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   thumbnailUrl,
+  videoUrl,
   durationSeconds,
   currentSeconds,
   isPlaying,
@@ -40,10 +49,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onSeek,
   playbackSpeed,
   onChangeSpeed,
+  onTimeUpdate,
+  onPlayingChange,
 }) => {
   const [controlsVisible, setControlsVisible] = useState(true);
-  const [isSpeedModalOpen, setIsSpeedModalOpen] = useState(false);
+  const [hasError, setHasError] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const videoViewRef = useRef<VideoView | null>(null);
 
+  // Button micro-animation scales
   const playBtnScale = useSharedValue(1);
   const rewindBtnScale = useSharedValue(1);
   const forwardBtnScale = useSharedValue(1);
@@ -70,7 +84,173 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     transform: [{ scale: fullscreenBtnScale.value }],
   }));
 
-  // Auto-hide controls after 4 seconds when playing
+  // Check if source is YouTube
+  const youtubeId = getYouTubeId(videoUrl);
+  const isYouTube = !!youtubeId;
+  const effectiveThumbnail = resolveVideoThumbnail(thumbnailUrl, videoUrl);
+
+  if (isYouTube && youtubeId) {
+    return (
+      <View style={styles.playerContainer}>
+        <View style={styles.playerViewport}>
+          {Platform.OS === 'web' ? (
+            <iframe
+              src={`https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=${isPlaying ? 1 : 0}&playsinline=1&enablejsapi=1&rel=0${currentSeconds > 0 ? `&start=${currentSeconds}` : ''}`}
+              style={{
+                width: '100%',
+                height: '100%',
+                border: 'none',
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+              }}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          ) : (
+            <WebView
+              style={StyleSheet.absoluteFillObject}
+              source={{
+                uri: `https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=${isPlaying ? 1 : 0}&playsinline=1&enablejsapi=1&rel=0${currentSeconds > 0 ? `&start=${currentSeconds}` : ''}`,
+              }}
+              allowsFullscreenVideo
+              allowsInlineMediaPlayback
+              mediaPlaybackRequiresUserAction={false}
+              javaScriptEnabled
+              domStorageEnabled
+              originWhitelist={['*']}
+            />
+          )}
+          {/* Top Watermark & HD Pill */}
+          <View style={styles.topInfoBar} pointerEvents="none">
+            <View style={styles.watermarkBadge}>
+              <MaterialIcons name="medical-services" size={12} color="#ffffff" />
+              <Text style={styles.watermarkText}>DOCLOCK CLINICAL</Text>
+            </View>
+            <View style={styles.hdBadge}>
+              <Text style={styles.hdText}>YouTube HD</Text>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  // Ensure effective video URL for direct player
+  const fallbackUrl = 'https://vjs.zencdn.net/v/oceans.mp4';
+  const effectiveSource =
+    videoUrl && videoUrl.trim().length > 0 && !videoUrl.startsWith('blob:')
+      ? videoUrl.trim()
+      : fallbackUrl;
+
+  // Initialize expo-video player with timeUpdate interval enabled
+  const player = useVideoPlayer(effectiveSource, (p) => {
+    p.loop = false;
+    p.playbackRate = playbackSpeed;
+    p.timeUpdateEventInterval = 0.25;
+  });
+
+  // Ensure timeUpdate interval is active on player instance
+  useEffect(() => {
+    if (!player) return;
+    try {
+      player.timeUpdateEventInterval = 0.25;
+    } catch (e) {}
+  }, [player]);
+
+  // Sync isPlaying state with expo-video player
+  useEffect(() => {
+    if (!player) return;
+    try {
+      if (isPlaying && !player.playing) {
+        player.play();
+      } else if (!isPlaying && player.playing) {
+        player.pause();
+      }
+    } catch (e) {
+      console.warn('[VideoPlayer] play/pause error:', e);
+    }
+  }, [isPlaying, player]);
+
+  // Sync playback speed
+  useEffect(() => {
+    if (!player) return;
+    try {
+      player.playbackRate = playbackSpeed;
+    } catch (e) {
+      console.warn('[VideoPlayer] speed error:', e);
+    }
+  }, [playbackSpeed, player]);
+
+  // External seek sync (e.g. from timestamp chapter click)
+  useEffect(() => {
+    if (!player) return;
+    try {
+      if (Math.abs((player.currentTime || 0) - currentSeconds) > 1.8) {
+        player.currentTime = currentSeconds;
+      }
+    } catch (e) {
+      console.warn('[VideoPlayer] seek sync error:', e);
+    }
+  }, [currentSeconds, player]);
+
+  // Listen to expo-video player events
+  useEffect(() => {
+    if (!player) return;
+
+    const timeSub = player.addListener('timeUpdate', (event) => {
+      setIsLoading(false);
+      if (onTimeUpdate && typeof event.currentTime === 'number') {
+        onTimeUpdate(Math.floor(event.currentTime));
+      }
+    });
+
+    const playSub = player.addListener('playingChange', (event) => {
+      if (onPlayingChange && event.isPlaying !== isPlaying) {
+        onPlayingChange(event.isPlaying);
+      }
+    });
+
+    const statusSub = player.addListener('statusChange', (event) => {
+      if (event.status === 'error') {
+        setHasError(true);
+        setIsLoading(false);
+      } else if (event.status === 'readyToPlay') {
+        setHasError(false);
+        setIsLoading(false);
+      } else if (event.status === 'loading') {
+        setIsLoading(true);
+      }
+    });
+
+    return () => {
+      timeSub.remove();
+      playSub.remove();
+      statusSub.remove();
+    };
+  }, [player, isPlaying, onTimeUpdate, onPlayingChange]);
+
+  // Active 250ms polling interval during playback to guarantee scrubber moves continuously
+  useEffect(() => {
+    if (!player || !isPlaying) return;
+
+    const interval = setInterval(() => {
+      try {
+        if (player.playing && typeof player.currentTime === 'number') {
+          const curSec = Math.floor(player.currentTime);
+          if (onTimeUpdate && curSec !== currentSeconds) {
+            onTimeUpdate(curSec);
+          }
+        }
+      } catch (e) {}
+    }, 250);
+
+    return () => clearInterval(interval);
+  }, [player, isPlaying, onTimeUpdate, currentSeconds]);
+
+  // Auto-hide controls after 4 seconds of uninterrupted playing
   useEffect(() => {
     if (!isPlaying) {
       setControlsVisible(true);
@@ -92,22 +272,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return `${mStr}:${sStr}`;
   };
 
-  const progressPercent =
-    durationSeconds > 0
-      ? Math.min(100, Math.max(0, (currentSeconds / durationSeconds) * 100))
-      : 0;
+  const totalEffectiveSeconds =
+    (player?.duration && player.duration > 0
+      ? Math.round(player.duration)
+      : durationSeconds) || 1;
+
+  const progressPercent = Math.min(
+    100,
+    Math.max(0, (currentSeconds / totalEffectiveSeconds) * 100)
+  );
 
   const handleSkip = (delta: number) => {
-    const next = Math.max(0, Math.min(durationSeconds, currentSeconds + delta));
+    const cur = player?.currentTime ?? currentSeconds;
+    const next = Math.max(0, Math.min(totalEffectiveSeconds, cur + delta));
+    if (player) {
+      player.currentTime = next;
+    }
     onSeek(next);
   };
 
   const handleScrubPress = (event: any) => {
     const { locationX } = event.nativeEvent;
-    // Assume container width approx 360-600; rough ratio
-    // We can also pass scrub directly
     const targetRatio = Math.max(0, Math.min(1, locationX / 320));
-    onSeek(Math.floor(targetRatio * durationSeconds));
+    const targetSec = Math.floor(targetRatio * totalEffectiveSeconds);
+    if (player) {
+      player.currentTime = targetSec;
+    }
+    onSeek(targetSec);
   };
 
   const handleCycleSpeed = () => {
@@ -116,32 +307,69 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     onChangeSpeed(SPEED_OPTIONS[nextIndex]);
   };
 
+  const handleTogglePlayInternal = () => {
+    if (player) {
+      if (player.playing) {
+        player.pause();
+      } else {
+        player.play();
+      }
+    }
+    onTogglePlay();
+  };
+
+  const handleFullscreenPress = () => {
+    if (videoViewRef.current) {
+      try {
+        videoViewRef.current.enterFullscreen();
+      } catch (err) {
+        Alert.alert('Theater Mode', 'Rotating to landscape view.');
+      }
+    } else {
+      Alert.alert('Theater Mode', 'Rotating to landscape view.');
+    }
+  };
+
   return (
     <View style={styles.playerContainer}>
       <Pressable
         onPress={() => setControlsVisible((prev) => !prev)}
         style={styles.playerViewport}
         accessibilityRole="image"
-        accessibilityLabel="Video Player"
+        accessibilityLabel="Interactive Medical Video Player"
       >
-        <Image
-          source={{ uri: thumbnailUrl }}
-          style={styles.thumbnailImage}
-          resizeMode="cover"
+        <VideoView
+          ref={videoViewRef}
+          player={player}
+          style={StyleSheet.absoluteFillObject}
+          contentFit="contain"
+          nativeControls={false}
+          allowsFullscreen
+          allowsPictureInPicture
         />
 
-        {/* Dark Theater Overlay */}
+        {/* Thumbnail fallback/poster when not playing or loading (direct video only) */}
+        {!isPlaying && currentSeconds === 0 && !hasError && (
+          <Image
+            source={{ uri: effectiveThumbnail }}
+            style={styles.thumbnailImage}
+            resizeMode="cover"
+          />
+        )}
+
+        {/* Dark Theater Overlay (direct video only) */}
         <LinearGradient
           colors={[
-            'rgba(13, 21, 34, 0.4)',
-            'rgba(13, 21, 34, 0.2)',
-            'rgba(13, 21, 34, 0.75)',
+            'rgba(13, 21, 34, 0.45)',
+            'rgba(13, 21, 34, 0.15)',
+            'rgba(13, 21, 34, 0.85)',
           ]}
           style={StyleSheet.absoluteFillObject}
+          pointerEvents="none"
         />
 
         {/* Top Watermark & HD Pill */}
-        <View style={styles.topInfoBar}>
+        <View style={styles.topInfoBar} pointerEvents="none">
           <View style={styles.watermarkBadge}>
             <MaterialIcons name="medical-services" size={12} color="#ffffff" />
             <Text style={styles.watermarkText}>DOCLOCK CLINICAL</Text>
@@ -152,73 +380,85 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </View>
         </View>
 
-        {/* Center Playback Controls */}
+        {/* Error / Loading Indicator HUD (direct video only) */}
+        {hasError ? (
+          <View style={styles.errorOverlay}>
+            <MaterialIcons name="error-outline" size={32} color="#f87171" />
+            <Text style={styles.errorText}>Video stream unavailable. Playing fallback preview.</Text>
+          </View>
+        ) : isLoading && isPlaying ? (
+          <View style={styles.loadingOverlay}>
+            <ActivityIndicator size="large" color={Colors.primary} />
+          </View>
+        ) : null}
+
+        {/* Center Playback Controls (direct video only) */}
         <View
-          style={[
-            styles.centerControlsRow,
-            { opacity: controlsVisible || !isPlaying ? 1 : 0 },
-          ]}
-        >
-          {/* Skip -10s */}
-          <AnimatedPressable
-            onPress={() => handleSkip(-10)}
-            onPressIn={() => {
-              rewindBtnScale.value = withSpring(0.9, Motion.tactileSpring);
-            }}
-            onPressOut={() => {
-              rewindBtnScale.value = withSpring(1, Motion.tactileSpring);
-            }}
-            style={[styles.skipButton, rewindBtnAnimStyle]}
-            accessibilityRole="button"
-            accessibilityLabel="Rewind 10 seconds"
+            style={[
+              styles.centerControlsRow,
+              { opacity: controlsVisible || !isPlaying ? 1 : 0 },
+            ]}
           >
-            <MaterialIcons name="replay-10" size={24} color="#ffffff" />
-          </AnimatedPressable>
+            {/* Skip -10s */}
+            <AnimatedPressable
+              onPress={() => handleSkip(-10)}
+              onPressIn={() => {
+                rewindBtnScale.value = withSpring(0.9, Motion.tactileSpring);
+              }}
+              onPressOut={() => {
+                rewindBtnScale.value = withSpring(1, Motion.tactileSpring);
+              }}
+              style={[styles.skipButton, rewindBtnAnimStyle]}
+              accessibilityRole="button"
+              accessibilityLabel="Rewind 10 seconds"
+            >
+              <MaterialIcons name="replay-10" size={24} color="#ffffff" />
+            </AnimatedPressable>
 
-          {/* Big Center Play / Pause Button */}
-          <AnimatedPressable
-            onPress={onTogglePlay}
-            onPressIn={() => {
-              playBtnScale.value = withSpring(0.92, Motion.tactileSpring);
-            }}
-            onPressOut={() => {
-              playBtnScale.value = withSpring(1, Motion.tactileSpring);
-            }}
-            style={[styles.bigPlayButton, playBtnAnimStyle]}
-            accessibilityRole="button"
-            accessibilityLabel={isPlaying ? 'Pause lecture' : 'Play lecture'}
-          >
-            <MaterialIcons
-              name={isPlaying ? 'pause' : 'play-arrow'}
-              size={36}
-              color={Colors.primary}
-            />
-          </AnimatedPressable>
+            {/* Big Center Play / Pause Button */}
+            <AnimatedPressable
+              onPress={handleTogglePlayInternal}
+              onPressIn={() => {
+                playBtnScale.value = withSpring(0.92, Motion.tactileSpring);
+              }}
+              onPressOut={() => {
+                playBtnScale.value = withSpring(1, Motion.tactileSpring);
+              }}
+              style={[styles.bigPlayButton, playBtnAnimStyle]}
+              accessibilityRole="button"
+              accessibilityLabel={isPlaying ? 'Pause lecture' : 'Play lecture'}
+            >
+              <MaterialIcons
+                name={isPlaying ? 'pause' : 'play-arrow'}
+                size={36}
+                color={Colors.primary}
+              />
+            </AnimatedPressable>
 
-          {/* Skip +10s */}
-          <AnimatedPressable
-            onPress={() => handleSkip(10)}
-            onPressIn={() => {
-              forwardBtnScale.value = withSpring(0.9, Motion.tactileSpring);
-            }}
-            onPressOut={() => {
-              forwardBtnScale.value = withSpring(1, Motion.tactileSpring);
-            }}
-            style={[styles.skipButton, forwardBtnAnimStyle]}
-            accessibilityRole="button"
-            accessibilityLabel="Forward 10 seconds"
-          >
-            <MaterialIcons name="forward-10" size={24} color="#ffffff" />
-          </AnimatedPressable>
-        </View>
+            {/* Skip +10s */}
+            <AnimatedPressable
+              onPress={() => handleSkip(10)}
+              onPressIn={() => {
+                forwardBtnScale.value = withSpring(0.9, Motion.tactileSpring);
+              }}
+              onPressOut={() => {
+                forwardBtnScale.value = withSpring(1, Motion.tactileSpring);
+              }}
+              style={[styles.skipButton, forwardBtnAnimStyle]}
+              accessibilityRole="button"
+              accessibilityLabel="Forward 10 seconds"
+            >
+              <MaterialIcons name="forward-10" size={24} color="#ffffff" />
+            </AnimatedPressable>
+          </View>
 
-        {/* Bottom Scrub Bar & Timer Bar */}
+        {/* Bottom Scrub Bar & Timer Bar (direct video only) */}
         <View
-          style={[
-            styles.bottomControlBar,
-            { opacity: controlsVisible || !isPlaying ? 1 : 0 },
-          ]}
-        >
+            style={[
+              styles.bottomControlBar,
+              { opacity: controlsVisible || !isPlaying ? 1 : 0 },
+            ]}
+          >
           {/* Scrub Track */}
           <Pressable onPress={handleScrubPress} style={styles.scrubTrackContainer}>
             <View style={styles.scrubTrack}>
@@ -242,7 +482,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </Text>
               <Text style={styles.timeDivider}>/</Text>
               <Text style={styles.totalTimeText}>
-                {formatTime(durationSeconds)}
+                {formatTime(totalEffectiveSeconds)}
               </Text>
             </View>
 
@@ -265,7 +505,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
               {/* Fullscreen Button */}
               <AnimatedPressable
-                onPress={() => Alert.alert('Theater Mode', 'Rotating to landscape theater view.')}
+                onPress={handleFullscreenPress}
                 onPressIn={() => {
                   fullscreenBtnScale.value = withSpring(0.92, Motion.tactileSpring);
                 }}
@@ -305,6 +545,7 @@ const styles = StyleSheet.create({
     height: 220,
     position: 'relative',
     justifyContent: 'space-between',
+    backgroundColor: '#000000',
   },
   thumbnailImage: {
     width: '100%',
@@ -323,7 +564,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -335,7 +576,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   hdBadge: {
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
     paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: 6,
@@ -344,6 +585,26 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: '#34d399',
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  errorOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+    paddingHorizontal: 20,
+    gap: 8,
+  },
+  errorText: {
+    color: '#f87171',
+    fontSize: 12,
+    textAlign: 'center',
+    fontWeight: '600',
   },
   centerControlsRow: {
     flexDirection: 'row',
@@ -369,7 +630,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
     alignItems: 'center',
     justifyContent: 'center',
   },

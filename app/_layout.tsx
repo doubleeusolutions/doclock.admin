@@ -9,6 +9,9 @@ import { useFonts } from 'expo-font';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Colors } from '@/theme';
 
+import { AuthProvider } from '@/contexts/AuthContext';
+import { AlertProvider } from '@/contexts/AlertContext';
+
 const GestureRoot = GestureHandlerRootView as React.ComponentType<
   PropsWithChildren<{ style?: any }>
 >;
@@ -40,73 +43,98 @@ export default function RootLayout() {
   return (
     <GestureRoot style={styles.container}>
       <SafeAreaProvider>
-        <StatusBar style="dark" translucent backgroundColor="transparent" />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: Colors.background },
-            animation: 'slide_from_right',
-          }}
-        >
-          <Stack.Screen name="index" />
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen
-            name="qbank/[id]"
-            options={{
-              headerShown: false,
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="videos/[id]"
-            options={{
-              headerShown: false,
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="videos/class/[classId]"
-            options={{
-              headerShown: false,
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="live/[id]"
-            options={{
-              headerShown: false,
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="bookmarks"
-            options={{
-              headerShown: false,
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="downloads"
-            options={{
-              headerShown: false,
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="flashcards"
-            options={{
-              headerShown: false,
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="daily-goals"
-            options={{
-              headerShown: false,
-              animation: 'slide_from_right',
-            }}
-          />
-        </Stack>
+        <AuthProvider>
+          <AlertProvider>
+            <StatusBar style="dark" translucent backgroundColor="transparent" />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: Colors.background },
+                animation: 'slide_from_right',
+              }}
+            >
+              <Stack.Screen name="index" />
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen
+                name="auth/login"
+                options={{
+                  headerShown: false,
+                  animation: 'fade',
+                }}
+              />
+              <Stack.Screen
+                name="auth/register"
+                options={{
+                  headerShown: false,
+                  animation: 'slide_from_right',
+                }}
+              />
+              <Stack.Screen
+                name="auth/forgot-password"
+                options={{
+                  headerShown: false,
+                  animation: 'slide_from_right',
+                }}
+              />
+              <Stack.Screen
+                name="qbank/[id]"
+                options={{
+                  headerShown: false,
+                  animation: 'slide_from_right',
+                }}
+              />
+              <Stack.Screen
+                name="videos/[id]"
+                options={{
+                  headerShown: false,
+                  animation: 'slide_from_right',
+                }}
+              />
+              <Stack.Screen
+                name="videos/class/[classId]"
+                options={{
+                  headerShown: false,
+                  animation: 'slide_from_right',
+                }}
+              />
+              <Stack.Screen
+                name="live/[id]"
+                options={{
+                  headerShown: false,
+                  animation: 'slide_from_right',
+                }}
+              />
+              <Stack.Screen
+                name="bookmarks"
+                options={{
+                  headerShown: false,
+                  animation: 'slide_from_right',
+                }}
+              />
+              <Stack.Screen
+                name="downloads"
+                options={{
+                  headerShown: false,
+                  animation: 'slide_from_right',
+                }}
+              />
+              <Stack.Screen
+                name="flashcards"
+                options={{
+                  headerShown: false,
+                  animation: 'slide_from_right',
+                }}
+              />
+              <Stack.Screen
+                name="daily-goals"
+                options={{
+                  headerShown: false,
+                  animation: 'slide_from_right',
+                }}
+              />
+            </Stack>
+          </AlertProvider>
+        </AuthProvider>
       </SafeAreaProvider>
     </GestureRoot>
   );

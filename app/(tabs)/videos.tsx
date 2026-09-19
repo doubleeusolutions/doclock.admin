@@ -11,22 +11,91 @@ import { useRouter } from 'expo-router';
 import { VideosHeader } from '@/components/videos/VideosHeader';
 import { VideoSubjectCard } from '@/components/videos/VideoSubjectCard';
 import {
-  VIDEO_SUBJECTS,
   VIDEO_FILTER_CHIPS,
   VideoSubject,
 } from '@/data/videosData';
 import { SubjectCategory } from '@/data/qbankData';
 import { Colors } from '@/theme';
+import { supabase } from '@/lib/supabase';
+import { useEffect } from 'react';
+import { ActivityIndicator } from 'react-native';
 
 export default function VideosScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const [subjects, setSubjects] = useState<VideoSubject[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedFilter, setSelectedFilter] = useState<'all' | SubjectCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
+  useEffect(() => {
+    let isMounted = true;
+    const fetchVideoSubjects = async () => {
+      try {
+        setLoading(true);
+        const [
+          { data: subjectsData, error },
+          { data: chaptersData },
+          { data: videosData },
+        ] = await Promise.all([
+          supabase.from('subjects').select('*').order('name', { ascending: true }),
+          supabase.from('chapters').select('id, subject_id'),
+          supabase.from('video_classes').select('id, subject_id, duration_seconds'),
+        ]);
+
+        if (error) throw error;
+
+        // Group chapters count by subject_id
+        const chaptersBySubject: Record<string, number> = {};
+        (chaptersData || []).forEach((c: any) => {
+          chaptersBySubject[c.subject_id] = (chaptersBySubject[c.subject_id] || 0) + 1;
+        });
+
+        // Group videos count and duration by subject_id
+        const videosBySubject: Record<string, number> = {};
+        const durationBySubject: Record<string, number> = {};
+        (videosData || []).forEach((v: any) => {
+          videosBySubject[v.subject_id] = (videosBySubject[v.subject_id] || 0) + 1;
+          const hrs = (v.duration_seconds || 0) / 3600;
+          durationBySubject[v.subject_id] = (durationBySubject[v.subject_id] || 0) + hrs;
+        });
+
+        if (isMounted) {
+          if (subjectsData && subjectsData.length > 0) {
+            setSubjects(
+              subjectsData.map((s: any) => ({
+                id: s.id,
+                name: s.name,
+                chaptersCount: chaptersBySubject[s.id] || 0,
+                durationHours: Math.round(durationBySubject[s.id] || 0),
+                videoCount: videosBySubject[s.id] || 0,
+                iconName: s.icon_name || 'accessibility-new',
+                iconBgColor: s.icon_bg_color || '#d7e2ff',
+                iconColor: s.icon_color || '#0059b9',
+                categories: s.categories || ['pre-clinical'],
+              }))
+            );
+          } else {
+            setSubjects([]);
+          }
+        }
+      } catch (err) {
+        console.warn('[VideosScreen] fetchVideoSubjects error:', err);
+        if (isMounted) setSubjects([]);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    fetchVideoSubjects();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Filter video subjects based on category chip and search query
   const filteredSubjects = useMemo(() => {
-    return VIDEO_SUBJECTS.filter((subject: VideoSubject) => {
+    return subjects.filter((subject: VideoSubject) => {
       const matchesCategory =
         selectedFilter === 'all' || subject.categories.includes(selectedFilter);
 
@@ -36,7 +105,7 @@ export default function VideosScreen() {
 
       return matchesCategory && matchesSearch;
     });
-  }, [selectedFilter, searchQuery]);
+  }, [subjects, selectedFilter, searchQuery]);
 
   return (
     <View style={[styles.safeArea, { paddingTop: insets.top }]}>
@@ -109,7 +178,12 @@ export default function VideosScreen() {
 
           {/* Video Subjects List */}
           <View style={styles.subjectsList}>
-            {filteredSubjects.length > 0 ? (
+            {loading ? (
+              <View style={{ paddingVertical: 40, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <ActivityIndicator size="large" color={Colors.primary} />
+                <Text style={{ fontSize: 13, color: Colors.onSurfaceVariant }}>Loading video subjects from database...</Text>
+              </View>
+            ) : filteredSubjects.length > 0 ? (
               filteredSubjects.map((subject) => (
                 <VideoSubjectCard
                   key={subject.id}
@@ -121,9 +195,9 @@ export default function VideosScreen() {
               ))
             ) : (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateTitle}>No videos found</Text>
+                <Text style={styles.emptyStateTitle}>No video subjects in database</Text>
                 <Text style={styles.emptyStateSubtitle}>
-                  Try clearing your search or selecting another category filter.
+                  Run seed.sql in Supabase SQL Editor to populate video lectures.
                 </Text>
               </View>
             )}

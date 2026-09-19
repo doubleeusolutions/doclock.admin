@@ -21,6 +21,7 @@ import {
 } from '@/data/mcqData';
 import { QuestionPaletteModal } from './QuestionPaletteModal';
 import { ResultSummaryModal } from './ResultSummaryModal';
+import { SaveToCustomTestModal } from '../qbank/SaveToCustomTestModal';
 
 interface McqAttemptModalProps {
   visible: boolean;
@@ -54,6 +55,7 @@ export const McqAttemptModal: React.FC<McqAttemptModalProps> = ({
   const [isResultOpen, setIsResultOpen] = useState(false);
   const [sessionResult, setSessionResult] = useState<SessionResult | null>(null);
   const [isReviewMode, setIsReviewMode] = useState(false);
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
 
@@ -373,6 +375,16 @@ export const McqAttemptModal: React.FC<McqAttemptModalProps> = ({
                 size={20}
                 color={isBookmarked ? Colors.primary : Colors.onSurfaceVariant}
               />
+            </Pressable>
+
+            {/* Save to Custom Test */}
+            <Pressable
+              onPress={() => setIsSaveModalOpen(true)}
+              style={styles.iconCircleBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Save to custom test"
+            >
+              <MaterialIcons name="playlist-add" size={22} color={Colors.primary} />
             </Pressable>
 
             {/* Palette Trigger Button */}
@@ -739,6 +751,13 @@ export const McqAttemptModal: React.FC<McqAttemptModalProps> = ({
             setIsResultOpen(false);
             onClose();
           }}
+        />
+
+        {/* Save to Custom Test Modal */}
+        <SaveToCustomTestModal
+          visible={isSaveModalOpen}
+          questionId={currentQ.id}
+          onClose={() => setIsSaveModalOpen(false)}
         />
       </View>
   );

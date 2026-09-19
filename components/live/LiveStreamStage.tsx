@@ -9,6 +9,8 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { WebView } from 'react-native-webview';
+import { useAuth } from '@/contexts/AuthContext';
 import { LiveClassSession } from '@/data/liveClassesData';
 import { Colors } from '@/theme';
 
@@ -27,6 +29,7 @@ interface LiveStreamStageProps {
   onChangeLayout: (mode: StageLayoutMode) => void;
   reactions: FloatingReaction[];
   onTriggerReaction: (emoji: string) => void;
+  activeSlideUrl?: string | null;
 }
 
 export const LiveStreamStage: React.FC<LiveStreamStageProps> = ({
@@ -35,33 +38,62 @@ export const LiveStreamStage: React.FC<LiveStreamStageProps> = ({
   onChangeLayout,
   reactions,
   onTriggerReaction,
+  activeSlideUrl,
 }) => {
   const [isMuted, setIsMuted] = useState(false);
   const [streamQuality, setStreamQuality] = useState<StreamQuality>('1080p');
   const [showQualityMenu, setShowQualityMenu] = useState(false);
 
-  // Slides thumbnail illustration for presentation view
-  const presentationSlideUrl =
-    'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1000&auto=format&fit=crop&q=80';
+  const slideUrlToRender = activeSlideUrl || 'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1000&auto=format&fit=crop&q=80';
+  const isPdf = slideUrlToRender.toLowerCase().includes('.pdf');
+
+  const { profile } = useAuth();
+  const candidateName = profile?.full_name || 'Candidate';
+  const userID = profile?.id || `user_${Math.floor(Math.random() * 10000)}`;
+
+  // URL to the web viewer hosted on the admin panel
+  // e.g., http://192.168.x.x:5173/viewer/roomID?userID=...&userName=...
+  // In development, ensure you are using your machine's local IP address, NOT localhost
+  const adminIpUrl = process.env.EXPO_PUBLIC_ADMIN_URL || 'http://192.168.1.100:5173';
+  const roomID = session.stream_url || `room_${session.id}`;
+
+  const viewerUrl = `${adminIpUrl}/live-viewer/${roomID}?userID=${userID}&userName=${encodeURIComponent(candidateName)}`;
+
+  console.log('--- ZEGOCLOUD DEBUG ---');
+  console.log('Attempting to join Room ID:', roomID);
+  console.log('WebView URL:', viewerUrl);
+  console.log('-----------------------');
 
   return (
     <View style={styles.stageWrapper}>
       {/* 16:9 Cinema Container */}
       <View style={styles.cinemaStage}>
-        {/* Background Visual Layer (Presentation or Speaker based on Layout) */}
-        {layoutMode === 'speaker' ? (
-          <Image
-            source={{ uri: session.faculty.avatar }}
-            style={styles.stageImage}
-            resizeMode="cover"
-          />
-        ) : (
-          <Image
-            source={{ uri: presentationSlideUrl }}
-            style={styles.stageImage}
-            resizeMode="cover"
-          />
+        {/* Background Visual Layer: Slides (Only visible when presentation) */}
+        {layoutMode === 'presentation' && (
+           <View style={StyleSheet.absoluteFill}>
+             {isPdf ? (
+               <WebView 
+                 source={{ uri: `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(slideUrlToRender)}` }}
+                 style={{ flex: 1, backgroundColor: '#070b13' }}
+               />
+             ) : (
+               <Image 
+                  source={{ uri: slideUrlToRender }} 
+                  style={{ flex: 1, resizeMode: 'contain', backgroundColor: '#070b13' }} 
+               />
+             )}
+           </View>
         )}
+
+        {/* The ZegoCloud WebView */}
+        <View style={layoutMode === 'presentation' ? styles.pipVideoContainer : StyleSheet.absoluteFill}>
+          <WebView
+            source={{ uri: viewerUrl }}
+            style={{ flex: 1, backgroundColor: '#000' }}
+            allowsInlineMediaPlayback={true}
+            mediaPlaybackRequiresUserAction={false}
+          />
+        </View>
 
         {/* Ambient Stage Dark Gradient */}
         <LinearGradient
@@ -72,87 +104,6 @@ export const LiveStreamStage: React.FC<LiveStreamStageProps> = ({
           ]}
           style={StyleSheet.absoluteFillObject}
         />
-
-        {/* TOP HUD: Quality, Latency, DocLock Live Tag */}
-        <View style={styles.topHud}>
-          <View style={styles.topHudLeft}>
-            <View style={styles.liveStreamBadge}>
-              <View style={styles.pulseGreenDot} />
-              <Text style={styles.liveStreamBadgeText}>DOCLOCK LIVE HD</Text>
-            </View>
-            <View style={styles.latencyBadge}>
-              <MaterialIcons name="speed" size={12} color="#10b981" />
-              <Text style={styles.latencyBadgeText}>124ms • 60fps</Text>
-            </View>
-          </View>
-
-          <View style={styles.topHudRight}>
-            <Pressable
-              onPress={() => setShowQualityMenu((prev) => !prev)}
-              style={styles.qualityBtn}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Stream quality settings"
-            >
-              <MaterialIcons name="hd" size={16} color="#ffffff" />
-              <Text style={styles.qualityBtnText}>{streamQuality}</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => setIsMuted((prev) => !prev)}
-              style={styles.hudIconBtn}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel={isMuted ? 'Unmute stream' : 'Mute stream'}
-            >
-              <MaterialIcons
-                name={isMuted ? 'volume-off' : 'volume-up'}
-                size={18}
-                color={isMuted ? '#ef4444' : '#ffffff'}
-              />
-            </Pressable>
-          </View>
-        </View>
-
-        {/* Quality Menu Dropdown */}
-        {showQualityMenu && (
-          <View style={styles.qualityDropdown}>
-            {(['1080p', '720p', '480p', 'audio_only'] as StreamQuality[]).map(
-              (q) => (
-                <Pressable
-                  key={q}
-                  onPress={() => {
-                    setStreamQuality(q);
-                    setShowQualityMenu(false);
-                  }}
-                  style={[
-                    styles.qualityOption,
-                    streamQuality === q && styles.qualityOptionActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.qualityOptionText,
-                      streamQuality === q && styles.qualityOptionTextActive,
-                    ]}
-                  >
-                    {q === 'audio_only' ? 'Audio Only' : `${q} HD`}
-                  </Text>
-                  {streamQuality === q && (
-                    <MaterialIcons name="check" size={14} color="#0059b9" />
-                  )}
-                </Pressable>
-              )
-            )}
-          </View>
-        )}
-
-
-        {/* Slide Tracker Badge (Bottom-Left) */}
-        <View style={styles.slideTrackerBadge}>
-          <MaterialIcons name="slideshow" size={13} color="#68d7fd" />
-          <Text style={styles.slideTrackerText}>Slide 14/36 • Antiarrhythmics</Text>
-        </View>
 
         {/* Floating Reactions Canvas */}
         <View style={styles.reactionsCanvas} pointerEvents="none">
@@ -253,6 +204,19 @@ const styles = StyleSheet.create({
   },
   stageImage: {
     ...StyleSheet.absoluteFillObject,
+  },
+  pipVideoContainer: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    width: 100,
+    height: 140,
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.2)',
+    zIndex: 20,
+    backgroundColor: '#000',
   },
 
   /* Top HUD */

@@ -17,7 +17,6 @@ import Animated, {
 import { Colors, Motion } from '@/theme';
 import {
   TEST_FILTER_TABS,
-  ASSESSMENTS,
   TestCategory,
   AssessmentItem,
 } from '@/data/testsData';
@@ -26,19 +25,26 @@ import { AssessmentCard } from '@/components/tests/AssessmentCard';
 import { ModeSelectionModal } from '@/components/mcq/ModeSelectionModal';
 import { McqAttemptModal } from '@/components/mcq/McqAttemptModal';
 import {
-  getQuestionsForTopic,
   AttemptMode,
   MCQQuestion,
 } from '@/data/mcqData';
+import { supabase } from '@/lib/supabase';
+import { useEffect } from 'react';
+import { ActivityIndicator, Alert } from 'react-native';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export default function TestsScreen() {
   const insets = useSafeAreaInsets();
+  const [assessments, setAssessments] = useState<AssessmentItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTab, setSelectedTab] = useState<'all' | TestCategory>('all');
 
   const startBtnScale = useSharedValue(1);
+  const startBtnAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: startBtnScale.value }],
+  }));
 
   // MCQ attempting modal state
   const [activeTestForMode, setActiveTestForMode] = useState<{
@@ -56,6 +62,73 @@ export default function TestsScreen() {
   const [attemptMode, setAttemptMode] = useState<AttemptMode>('exam');
   const [attemptQuestions, setAttemptQuestions] = useState<MCQQuestion[]>([]);
 
+  // Custom tests state
+  const [customTests, setCustomTests] = useState<any[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchAssessments = async () => {
+      try {
+        setLoading(true);
+        // 1. Fetch official assessments
+        const { data, error } = await supabase
+          .from('assessments')
+          .select('*')
+          .order('created_at', { ascending: true });
+
+        if (error) throw error;
+
+        if (isMounted) {
+          if (data && data.length > 0) {
+            setAssessments(
+              data.map((a: any) => ({
+                id: a.id,
+                title: a.title,
+                category: a.category as TestCategory,
+                tag: a.tag || 'Standard',
+                tagBgColor: a.tag_bg_color || '#d7e2ff',
+                tagTextColor: a.tag_text_color || '#0059b9',
+                testsCount: a.tests_count || 1,
+                mcqsCount: a.mcqs_count || 300,
+                durationHours: Number(a.duration_hours || 3.0),
+                iconName: a.icon_name || 'stars',
+                iconBgColor: a.icon_bg_color || '#d7e2ff',
+                iconColor: a.icon_color || '#0059b9',
+              }))
+            );
+          } else {
+            setAssessments([]);
+          }
+        }
+        
+        // 2. Fetch custom tests
+        const { data: userAuth } = await supabase.auth.getUser();
+        if (userAuth.user) {
+          // Fetch custom tests and get a count of questions using a join
+          const { data: ctData, error: ctError } = await supabase
+            .from('custom_tests')
+            .select('*, custom_test_questions(count)')
+            .eq('user_id', userAuth.user.id)
+            .order('created_at', { ascending: false });
+            
+          if (!ctError && ctData && isMounted) {
+            setCustomTests(ctData);
+          }
+        }
+      } catch (err) {
+        console.warn('[TestsScreen] fetchAssessments error:', err);
+        if (isMounted) setAssessments([]);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    fetchAssessments();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const handleStartTestFlow = (testInfo: {
     id: string;
     title: string;
@@ -66,24 +139,92 @@ export default function TestsScreen() {
     setActiveTestForMode(testInfo);
   };
 
-  const handleStartAttempt = (
+  const handleStartAttempt = async (
     testInfo: { id: string; title: string; subjectName: string; mcqCount: number },
     chosenMode: AttemptMode
   ) => {
-    const qList = getQuestionsForTopic(
-      testInfo.id,
-      testInfo.title,
-      testInfo.subjectName,
-      Math.min(10, Math.max(5, testInfo.mcqCount))
-    );
-    setAttemptQuestions(qList);
-    setAttemptMode(chosenMode);
-    setActiveTestForAttempt(testInfo);
+    try {
+      let qData: any[] | null = null;
+      
+      if (testInfo.id.startsWith('custom_')) {
+        // Fetch from custom test questions
+        const customTestId = testInfo.id.replace('custom_', '');
+        const { data: ctQuestions } = await supabase
+          .from('custom_test_questions')
+          .select('question_id')
+          .eq('custom_test_id', customTestId);
+          
+        if (ctQuestions && ctQuestions.length > 0) {
+          const qIds = ctQuestions.map(q => q.question_id);
+          const { data: mcqData } = await supabase
+            .from('mcq_questions')
+            .select('*, options:mcq_options(*)')
+            .in('id', qIds);
+          qData = mcqData;
+        }
+      } else {
+        // Fetch normal assessment questions
+        const { data } = await supabase
+          .from('mcq_questions')
+          .select('*, options:mcq_options(*)')
+          .eq('assessment_id', testInfo.id)
+          .limit(50);
+        qData = data;
+          
+        if (!qData || qData.length === 0) {
+          const fallbackQuery = await supabase
+            .from('mcq_questions')
+            .select('*, options:mcq_options(*)')
+            .limit(10);
+          qData = fallbackQuery.data;
+        }
+      }
+
+      if (!qData || qData.length === 0) {
+        Alert.alert(
+          'No Questions Found',
+          'There are no questions available for this test.'
+        );
+        return;
+      }
+
+      const qList: MCQQuestion[] = qData.map((q: any) => ({
+        id: q.id,
+        topicId: q.topic_id || testInfo.id,
+        topicTitle: testInfo.title,
+        subjectName: testInfo.subjectName,
+        questionNumber: q.question_number,
+        clinicalVignette: q.clinical_vignette,
+        imageUrl: q.image_url,
+        imageCaption: q.image_caption,
+        difficulty: q.difficulty,
+        isHighYield: q.is_high_yield,
+        isImageBased: q.is_image_based,
+        explanation: {
+          overall: q.explanation,
+          goldenPearl: q.golden_pearl,
+          reference: q.reference || '',
+        },
+        options: (q.options || []).map((o: any) => ({
+          id: o.option_label,
+          text: o.option_text,
+          isCorrect: o.is_correct,
+          peerPercentage: o.peer_percentage || 0,
+          explanation: o.option_explanation,
+        })),
+      })) as any;
+
+      setAttemptQuestions(qList);
+      setAttemptMode(chosenMode);
+      setActiveTestForAttempt(testInfo);
+    } catch (e) {
+      console.error('[TestsScreen] Error starting attempt:', e);
+    }
   };
 
   // Filter assessments based on category tab and search query
   const filteredAssessments = useMemo(() => {
-    return ASSESSMENTS.filter((item) => {
+    return assessments.filter((item) => {
       const matchesTab =
         selectedTab === 'all' ? true : item.category === selectedTab;
 
@@ -96,7 +237,7 @@ export default function TestsScreen() {
 
       return matchesTab && matchesSearch;
     });
-  }, [selectedTab, searchQuery]);
+  }, [assessments, selectedTab, searchQuery]);
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -249,12 +390,7 @@ export default function TestsScreen() {
                 onPressOut={() => {
                   startBtnScale.value = withSpring(1, Motion.tactileSpring);
                 }}
-                style={[
-                  styles.ctaButton,
-                  useAnimatedStyle(() => ({
-                    transform: [{ scale: startBtnScale.value }],
-                  })),
-                ]}
+                style={[styles.ctaButton, startBtnAnimStyle]}
                 accessibilityRole="button"
                 accessibilityLabel="Start Grand Mock"
               >
@@ -263,6 +399,76 @@ export default function TestsScreen() {
               </AnimatedPressable>
             </View>
           </View>
+
+          {/* Custom Tests Section */}
+          {customTests.length > 0 && (
+            <View style={{ marginBottom: 24 }}>
+              <View style={styles.sectionHeaderRow}>
+                <View style={styles.sectionTitleGroup}>
+                  <View style={[styles.sectionDot, { backgroundColor: '#f59e0b' }]} />
+                  <Text style={styles.sectionTitle}>My Custom Tests</Text>
+                </View>
+                <Text style={styles.sectionBadge}>
+                  {customTests.length} Playlists
+                </Text>
+              </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+              >
+                {customTests.map(ct => {
+                  const ctQuestionCount = ct.custom_test_questions?.[0]?.count || 0;
+                  return (
+                    <Pressable
+                      key={ct.id}
+                      style={{
+                        width: 280,
+                        backgroundColor: '#fff',
+                        borderRadius: 16,
+                        padding: 16,
+                        borderWidth: 1,
+                        borderColor: 'rgba(231, 238, 255, 0.8)',
+                        shadowColor: '#121c2b',
+                        shadowOffset: { width: 0, height: 2 },
+                        shadowOpacity: 0.04,
+                        shadowRadius: 8,
+                        elevation: 2,
+                      }}
+                      onPress={() => handleStartTestFlow({
+                        id: `custom_${ct.id}`,
+                        title: ct.title,
+                        subjectName: 'Custom Test',
+                        mcqCount: ctQuestionCount,
+                        durationMinutes: ctQuestionCount * 1, // 1 min per question roughly
+                      })}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                        <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: '#fef3c7', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                          <MaterialIcons name="folder-special" size={20} color="#d97706" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 16, fontWeight: '700', color: Colors.onSurface }} numberOfLines={1}>
+                            {ct.title}
+                          </Text>
+                          <Text style={{ fontSize: 13, color: Colors.onSurfaceVariant }}>
+                            {ctQuestionCount} {ctQuestionCount === 1 ? 'Question' : 'Questions'}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+                        <Text style={{ fontSize: 12, color: Colors.primary, fontWeight: '600' }}>
+                          Start Test
+                        </Text>
+                        <MaterialIcons name="arrow-forward" size={16} color={Colors.primary} />
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
 
           {/* Section Title */}
           <View style={styles.sectionHeaderRow}>
@@ -277,7 +483,12 @@ export default function TestsScreen() {
 
           {/* Assessment Cards List */}
           <View style={styles.assessmentList}>
-            {filteredAssessments.length > 0 ? (
+            {loading ? (
+              <View style={{ paddingVertical: 40, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <ActivityIndicator size="large" color={Colors.primary} />
+                <Text style={{ fontSize: 13, color: Colors.onSurfaceVariant }}>Loading assessments from database...</Text>
+              </View>
+            ) : filteredAssessments.length > 0 ? (
               filteredAssessments.map((item: AssessmentItem) => (
                 <AssessmentCard
                   key={item.id}
@@ -298,10 +509,10 @@ export default function TestsScreen() {
               ))
             ) : (
               <View style={styles.emptyState}>
-                <MaterialIcons name="search-off" size={40} color={Colors.onSurfaceVariant} />
-                <Text style={styles.emptyStateTitle}>No assessments found</Text>
+                <MaterialIcons name="assignment" size={40} color={Colors.primary} />
+                <Text style={styles.emptyStateTitle}>No assessments in database</Text>
                 <Text style={styles.emptyStateSub}>
-                  Try clearing your search or choosing a different category filter.
+                  Run seed.sql in Supabase SQL Editor to populate grand mocks and subject tests.
                 </Text>
               </View>
             )}

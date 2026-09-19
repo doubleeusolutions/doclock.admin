@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ScrollView,
   View,
@@ -8,6 +8,7 @@ import {
   Image,
   useWindowDimensions,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -16,10 +17,8 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
-import {
-  LiveClassSession,
-  LIVE_CLASSES_DATA,
-} from '@/data/liveClassesData';
+import { LiveClassSession } from '@/data/liveClassesData';
+import { supabase } from '@/lib/supabase';
 import { Colors, Motion } from '@/theme';
 
 interface LiveClassCarouselProps {
@@ -37,10 +36,76 @@ export const LiveClassCarousel: React.FC<LiveClassCarouselProps> = ({
   const cardWidth = Math.min(windowWidth * 0.86, 360);
   const snapInterval = cardWidth + 14;
 
+  const [sessions, setSessions] = useState<LiveClassSession[]>([]);
+  const [loading, setLoading] = useState(true);
+
   // Reminders tracked by session id
   const [remindedSessionIds, setRemindedSessionIds] = useState<
     Record<string, boolean>
   >({});
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchLive = async () => {
+      try {
+        const { data } = await supabase
+          .from('live_sessions')
+          .select('*, faculty:faculty_profiles(*)')
+          .order('created_at', { ascending: false });
+
+        if (isMounted) {
+          if (data && data.length > 0) {
+            setSessions(
+              data.map((d: any) => ({
+                id: d.id,
+                title: d.title,
+                subject: d.subject_id,
+                chapter: d.chapter,
+                status: d.status,
+                badgeText: d.status === 'live' ? 'LIVE NOW' : 'UPCOMING',
+                viewerCount: `${d.attendees_count || 0} Attending`,
+                attendeesCount: d.attendees_count || 0,
+                faculty: d.faculty
+                  ? {
+                      name: d.faculty.name,
+                      title: d.faculty.title,
+                      institution: d.faculty.institution || 'Medical Faculty',
+                      avatar: d.faculty.avatar_url,
+                    }
+                  : {
+                      name: 'Medical Faculty',
+                      title: 'Faculty Professor',
+                      institution: 'DocLock Faculty',
+                      avatar: 'https://images.unsplash.com/photo-1622253692010-333f2da6031d?w=400',
+                    },
+                timeString: 'Interactive Q&A Session',
+                durationMinutes: d.duration_minutes || 60,
+                thumbnailUrl: d.thumbnail_url || 'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=800',
+                gradientOverlay: [
+                  'rgba(18, 28, 43, 0.92)',
+                  'rgba(0, 47, 108, 0.86)',
+                  'rgba(24, 15, 45, 0.90)',
+                ],
+                accentColor: '#ef4444',
+                keyTopics: d.key_topics || [],
+              }))
+            );
+          } else {
+            setSessions([]);
+          }
+        }
+      } catch (err) {
+        if (isMounted) setSessions([]);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    fetchLive();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleToggleReminder = (session: LiveClassSession) => {
     setRemindedSessionIds((prev) => {
@@ -66,6 +131,24 @@ export const LiveClassCarousel: React.FC<LiveClassCarouselProps> = ({
     }
   };
 
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.centerBox]}>
+        <ActivityIndicator size="small" color={Colors.primary} />
+      </View>
+    );
+  }
+
+  if (sessions.length === 0) {
+    return (
+      <View style={[styles.container, styles.emptyBox]}>
+        <MaterialIcons name="videocam" size={32} color={Colors.primary} />
+        <Text style={styles.emptyTitle}>No Live Sessions Right Now</Text>
+        <Text style={styles.emptySubtitle}>Upcoming interactive live classes will appear here.</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {/* Horizontal Carousel */}
@@ -77,7 +160,7 @@ export const LiveClassCarousel: React.FC<LiveClassCarouselProps> = ({
         snapToAlignment="start"
         contentContainerStyle={styles.scrollContent}
       >
-        {LIVE_CLASSES_DATA.map((session) => {
+        {sessions.map((session) => {
           const isLive = session.status === 'live';
           const isReminded = !!remindedSessionIds[session.id];
 
@@ -457,5 +540,31 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#059669',
+  },
+  centerBox: {
+    paddingVertical: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyBox: {
+    marginHorizontal: 16,
+    padding: 24,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e2e7f2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.onSurface,
+  },
+  emptySubtitle: {
+    fontSize: 12,
+    color: Colors.onSurfaceVariant,
+    textAlign: 'center',
   },
 });
